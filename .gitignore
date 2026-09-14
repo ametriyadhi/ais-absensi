@@ -1,0 +1,42 @@
+# Environment variables
+.env
+.env.backup
+.env.production
+.env.local
+!.env.example
+
+# Uploaded files and media
+/app/uploads/*
+!/app/uploads/admins/
+/app/uploads/admins/*
+!/app/uploads/admins/.gitkeep
+!/app/uploads/staff/
+/app/uploads/staff/*
+!/app/uploads/staff/.gitkeep
+!/app/uploads/students/
+/app/uploads/students/*
+!/app/uploads/students/.gitkeep
+
+# Compressed archives & backups
+*.zip
+*.tar
+*.gz
+*.rar
+*.7z
+*.bak
+
+# Logs and databases
+*.log
+/logs/
+
+# Operating System files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
