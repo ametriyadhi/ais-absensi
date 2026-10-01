@@ -5,14 +5,14 @@ require_once '../../config/auth.php';
 require_once '../../config/security.php';
 require_once '../../includes/functions.php';
 
-requireSuperAdmin();
-requireCsrf();
+requireLogin();
+checkUserAccess('master_staff');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') { redirect('index.php'); }
 
 $id = (int)($_POST['id'] ?? 0);
 
-$stmt = $pdo->prepare("SELECT name, user_id, photo FROM staff WHERE id = ? LIMIT 1");
+$stmt = $pdo->prepare("SELECT user_id, photo FROM staff WHERE id = ? LIMIT 1");
 $stmt->execute([$id]);
 $staff = $stmt->fetch();
 
@@ -34,7 +34,6 @@ if ($staff) {
     }
 
     $pdo->commit();
-    logAudit($pdo, 'delete', 'staff', $id, ['name' => $staff['name'] ?? '']);
     flash('success', 'Staff berhasil dihapus.');
 }
 

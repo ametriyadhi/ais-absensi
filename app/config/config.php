@@ -19,6 +19,14 @@ if (!defined('ASSET_URL')) {
     define('ASSET_URL', getenv('APP_ASSET_URL') ?: '/assets');
 }
 
+if (!defined('UPLOAD_URL')) {
+    define('UPLOAD_URL', getenv('APP_UPLOAD_URL') ?: '/uploads');
+}
+
+if (!defined('UPLOAD_PATH')) {
+    define('UPLOAD_PATH', dirname(__DIR__) . '/uploads');
+}
+
 
 if (!defined('UPLOAD_STUDENT')) {
     define('UPLOAD_STUDENT', dirname(__DIR__) . '/uploads/students/');
@@ -61,4 +69,4 @@ spl_autoload_register(function ($class) {
     if (file_exists($file)) {
         require_once $file;
     }
-});
+});

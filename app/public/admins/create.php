@@ -5,7 +5,8 @@ require_once '../../config/auth.php';
 require_once '../../config/security.php';
 require_once '../../includes/functions.php';
 
-requireSuperAdmin();
+requireLogin();
+checkUserAccess('master_admins');
 $pageTitle = 'Tambah Admin';
 
 $grades = $pdo->query("SELECT * FROM grades ORDER BY sort_order, grade")->fetchAll();
@@ -19,7 +20,6 @@ $classGroups = $pdo->query("
 $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    requireCsrf();
     $name = trim($_POST['name'] ?? '');
     $username = trim($_POST['username'] ?? '');
     $password = $_POST['password'] ?? '';
@@ -35,15 +35,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // PROSES UPLOAD FOTO ADMIN
             $photoNameSave = null;
             if (!empty($_FILES['photo']['name']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
-                $allowed = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
-                $mime = mime_content_type($_FILES['photo']['tmp_name']);
-                if (!isset($allowed[$mime])) {
-                    throw new Exception('Format foto tidak valid. Gunakan JPG, PNG, atau WEBP.');
-                }
-                if ($_FILES['photo']['size'] > 2 * 1024 * 1024) {
-                    throw new Exception('Ukuran foto maksimal 2 MB.');
-                }
-                $photoNameSave = uniqid('admin_', true) . '.' . $allowed[$mime];
+                $ext = pathinfo($_FILES['photo']['name'], PATHINFO_EXTENSION);
+                $photoNameSave = uniqid('admin_', true) . '.' . $ext;
                 $uploadDir = '../../uploads/admins/';
                 if (!is_dir($uploadDir)) { mkdir($uploadDir, 0755, true); }
                 move_uploaded_file($_FILES['photo']['tmp_name'], $uploadDir . $photoNameSave);
@@ -73,7 +66,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $pdo->commit();
-            logAudit($pdo, 'create', 'admins', $userId, ['username' => $username]);
             flash('success', 'Admin berhasil dibuat.');
             redirect('index.php');
         } catch (Throwable $e) {
@@ -93,7 +85,6 @@ require '../../includes/header.php';
     <?php endif; ?>
 
     <form method="POST" enctype="multipart/form-data">
-        <?= csrfField() ?>
         <div class="form-grid">
             <div class="form-group">
                 <label>Nama</label>

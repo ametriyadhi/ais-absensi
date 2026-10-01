@@ -5,15 +5,14 @@ require_once '../../config/auth.php';
 require_once '../../config/security.php';
 require_once '../../includes/functions.php';
 
-requireSuperAdmin();
-requireCsrf();
+requireLogin();
+checkUserAccess('master_units');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $id = (int)($_POST['id'] ?? 0);
     if ($id > 0) {
         $stmt = $pdo->prepare("DELETE FROM units WHERE id = ?");
         $stmt->execute([$id]);
-        logAudit($pdo, 'delete', 'units', $id);
         flash('success', 'Unit berhasil dihapus.');
     }
 }

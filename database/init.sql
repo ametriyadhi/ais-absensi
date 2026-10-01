@@ -123,6 +123,35 @@ CREATE TABLE `admin_grade_permissions` (
 -- --------------------------------------------------------
 
 --
+-- Struktur dari tabel `admin_unit_permissions`
+--
+
+CREATE TABLE `admin_unit_permissions` (
+  `id` bigint(20) UNSIGNED NOT NULL,
+  `user_id` bigint(20) UNSIGNED NOT NULL,
+  `unit_id` int(10) UNSIGNED NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Struktur dari tabel `system_settings`
+--
+
+CREATE TABLE `system_settings` (
+  `setting_key` varchar(50) NOT NULL,
+  `setting_value` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`setting_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+INSERT INTO `system_settings` (`setting_key`, `setting_value`) VALUES
+('ks_delete_attendance', '0'),
+('ks_edit_time', '0');
+
+-- --------------------------------------------------------
+
+--
 -- Struktur dari tabel `class_groups`
 --
 
@@ -525,7 +554,8 @@ CREATE TABLE `staff_attendances` (
   `time_in` time DEFAULT NULL,
   `time_out` time DEFAULT NULL,
   `scan_code` varchar(100) DEFAULT NULL,
-  `status` enum('tepat_waktu','terlambat') NOT NULL,
+  `status` enum('tepat_waktu','terlambat','izin','sakit') NOT NULL,
+  `keterangan` varchar(255) DEFAULT NULL,
   `scanned_by` bigint(20) UNSIGNED DEFAULT NULL,
   `latitude` decimal(10,8) DEFAULT NULL,
   `longitude` decimal(11,8) DEFAULT NULL,
@@ -1323,7 +1353,8 @@ CREATE TABLE `student_attendances` (
   `time_in` time DEFAULT NULL,
   `time_out` time DEFAULT NULL,
   `scan_code` varchar(100) DEFAULT NULL,
-  `status` enum('tepat_waktu','terlambat') NOT NULL,
+  `status` enum('tepat_waktu','terlambat','izin','sakit') NOT NULL,
+  `keterangan` varchar(255) DEFAULT NULL,
   `scanned_by` bigint(20) UNSIGNED DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -2068,7 +2099,7 @@ CREATE TABLE `users` (
   `password` varchar(255) NOT NULL,
   `name` varchar(255) NOT NULL,
   `photo` varchar(255) DEFAULT NULL,
-  `role` enum('super_admin','admin','staff') DEFAULT 'staff',
+  `role` enum('super_admin','admin','staff','kepala_sekolah') NOT NULL DEFAULT 'staff',
   `remember_token` varchar(100) DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
@@ -2137,6 +2168,14 @@ ALTER TABLE `admin_grade_permissions`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `unique_admin_grade` (`user_id`,`grade_id`),
   ADD KEY `grade_id` (`grade_id`);
+
+--
+-- Indeks untuk tabel `admin_unit_permissions`
+--
+ALTER TABLE `admin_unit_permissions`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `fk_admin_unit_user` (`user_id`),
+  ADD KEY `fk_admin_unit_unit` (`unit_id`);
 
 --
 -- Indeks untuk tabel `class_groups`
@@ -2255,6 +2294,12 @@ ALTER TABLE `admin_grade_permissions`
   MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT untuk tabel `admin_unit_permissions`
+--
+ALTER TABLE `admin_unit_permissions`
+  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT untuk tabel `class_groups`
 --
 ALTER TABLE `class_groups`
@@ -2343,6 +2388,13 @@ ALTER TABLE `admin_class_permissions`
 ALTER TABLE `admin_grade_permissions`
   ADD CONSTRAINT `admin_grade_permissions_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
   ADD CONSTRAINT `admin_grade_permissions_ibfk_2` FOREIGN KEY (`grade_id`) REFERENCES `grades` (`id`) ON DELETE CASCADE;
+
+--
+-- Ketidakleluasaan untuk tabel `admin_unit_permissions`
+--
+ALTER TABLE `admin_unit_permissions`
+  ADD CONSTRAINT `fk_admin_unit_unit` FOREIGN KEY (`unit_id`) REFERENCES `units` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_admin_unit_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
 
 --
 -- Ketidakleluasaan untuk tabel `class_groups`

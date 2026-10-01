@@ -19,6 +19,7 @@ try {
             PDO::ATTR_EMULATE_PREPARES => false
         ]
     );
+    $pdo->exec("SET time_zone = '+07:00'");
 } catch (PDOException $e) {
     error_log('Database connection error: ' . $e->getMessage());
     die('Database tidak dapat terhubung: ' . (getenv('APP_DEBUG') === 'true' ? $e->getMessage() : 'Silakan hubungi administrator.'));

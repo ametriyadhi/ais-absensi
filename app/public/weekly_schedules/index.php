@@ -5,15 +5,37 @@ require_once '../../config/auth.php';
 require_once '../../config/security.php';
 require_once '../../includes/functions.php';
 
-requireSuperAdmin();
+requireLogin();
+checkUserAccess('master_schedules');
+$currentRole = currentRole();
 $pageTitle = 'Master Jadwal Pekanan';
+$userId = currentUserId();
 
-$schedules = $pdo->query("
+$whereSql = "";
+$params = [];
+
+if ($currentRole === 'kepala_sekolah') {
+    $stmtKs = $pdo->prepare("SELECT unit_id FROM admin_unit_permissions WHERE user_id = ? LIMIT 1");
+    $stmtKs->execute([$userId]);
+    $ksUnitId = $stmtKs->fetchColumn();
+
+    if ($ksUnitId) {
+        $whereSql = "WHERE ws.unit_id = ?";
+        $params[] = $ksUnitId;
+    } else {
+        $whereSql = "WHERE 1 = 0";
+    }
+}
+
+$stmt = $pdo->prepare("
     SELECT ws.*, u.unit AS unit_name
     FROM weekly_schedules ws
     INNER JOIN units u ON u.id = ws.unit_id
+    {$whereSql}
     ORDER BY u.id ASC, ws.day_code ASC
-")->fetchAll();
+");
+$stmt->execute($params);
+$schedules = $stmt->fetchAll();
 
 require '../../includes/header.php';
 ?>
@@ -22,7 +44,7 @@ require '../../includes/header.php';
     <div class="card-header">
         <div>
             <h3>Master Jadwal Pekanan</h3>
-            <small>Aturan Jam Masuk & Pulang Harian per Unit</small>
+            <small>Aturan Jam Masuk & Pulang Harian per Unit <?= $currentRole === 'kepala_sekolah' ? '(Khusus Unit Anda)' : '' ?></small>
         </div>
         <a href="create.php" class="btn btn-primary">+ Tambah Jadwal</a>
     </div>
@@ -77,9 +99,8 @@ require '../../includes/header.php';
                             <a href="edit.php?id=<?= $schedule['id'] ?>" class="btn btn-success" style="padding: 4px 8px; font-size: 12px; margin-right: 4px;">Edit</a>
                             
                             <form method="POST" action="delete.php" style="display:inline;">
-                                <?= csrfField() ?>
                                 <input type="hidden" name="id" value="<?= $schedule['id'] ?>">
-                                <button type="submit" class="btn btn-danger" style="padding: 4px 8px; font-size: 12px;" onclick="return confirm('Yakin ingin menghapus jadwal ini? Data absensi yang sudah berlalu TIDAK akan hilang atau rusak.');">Hapus</button>
+                                <button type="submit" class="btn btn-danger" style="padding: 4px 8px; font-size: 12px;" onclick="return confirm('Yakin ingin menghapus jadwal ini?');">Hapus</button>
                             </form>
                         </td>
                     </tr>

@@ -5,14 +5,25 @@ require_once '../../config/auth.php';
 require_once '../../config/security.php';
 require_once '../../includes/functions.php';
 
-requireSuperAdmin();
+requireLogin();
+checkUserAccess('master_grades');
+$currentRole = currentRole();
 $pageTitle = 'Tambah Grade';
+$userId = currentUserId();
+
+$ksUnitId = 0;
+if ($currentRole === 'kepala_sekolah') {
+    $stmtKs = $pdo->prepare("SELECT unit_id FROM admin_unit_permissions WHERE user_id = ? LIMIT 1");
+    $stmtKs->execute([$userId]);
+    $ksUnitId = (int)$stmtKs->fetchColumn();
+}
 
 $units = $pdo->query("SELECT * FROM units ORDER BY id ASC")->fetchAll();
 $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $unitId = (int)($_POST['unit_id'] ?? 0);
+    // Super Admin bebas milih, Kepsek dipaksa pakai Unit-nya
+    $unitId = $currentRole === 'super_admin' ? (int)($_POST['unit_id'] ?? 0) : $ksUnitId;
     $grade = trim($_POST['grade'] ?? '');
     $sortOrder = (int)($_POST['sort_order'] ?? 0);
 
@@ -44,22 +55,37 @@ require '../../includes/header.php';
         <div class="form-grid">
             <div class="form-group">
                 <label>Unit *</label>
-                <select name="unit_id" required>
-                    <option value="">Pilih Unit...</option>
-                    <?php foreach ($units as $u): ?>
-                        <option value="<?= $u['id'] ?>"><?= e($u['unit']) ?></option>
-                    <?php endforeach; ?>
-                </select>
+                <?php if ($currentRole === 'super_admin'): ?>
+                    <select name="unit_id" required>
+                        <option value="">Pilih Unit...</option>
+                        <?php foreach ($units as $u): ?>
+                            <option value="<?= $u['id'] ?>"><?= e($u['unit']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                <?php else: ?>
+                    <?php 
+                        $unitNameStr = '-';
+                        foreach ($units as $u) {
+                            if($u['id'] == $ksUnitId) { $unitNameStr = $u['unit']; break; }
+                        }
+                    ?>
+                    <input type="text" value="<?= e($unitNameStr) ?>" disabled style="background:#f1f5f9; cursor:not-allowed;">
+                    <small style="color:#0284c7;">Grade akan otomatis ditambahkan ke unit Anda.</small>
+                <?php endif; ?>
             </div>
+
             <div class="form-group">
                 <label>Nama Grade *</label>
                 <input type="text" name="grade" placeholder="Contoh: Kelas 7" required>
             </div>
+            
             <div class="form-group">
                 <label>Urutan (Opsional)</label>
                 <input type="number" name="sort_order" value="0">
+                <small>Angka terkecil tampil lebih dulu.</small>
             </div>
         </div>
+        
         <div style="margin-top:20px">
             <button class="btn btn-primary" type="submit">Simpan</button>
             <a href="index.php" class="btn btn-success">Kembali</a>

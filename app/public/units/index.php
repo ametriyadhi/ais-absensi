@@ -5,7 +5,8 @@ require_once '../../config/auth.php';
 require_once '../../config/security.php';
 require_once '../../includes/functions.php';
 
-requireSuperAdmin();
+requireLogin();
+checkUserAccess('master_units');
 $pageTitle = 'Master Unit';
 
 $units = $pdo->query("SELECT * FROM units ORDER BY id ASC")->fetchAll();
@@ -40,7 +41,6 @@ require '../../includes/header.php';
                     <td>
                         <a href="edit.php?id=<?= $u['id'] ?>" class="btn btn-success" style="padding: 4px 8px; font-size: 12px;">Edit</a>
                         <form method="POST" action="delete.php" style="display:inline;">
-                            <?= csrfField() ?>
                             <input type="hidden" name="id" value="<?= $u['id'] ?>">
                             <button class="btn btn-danger" style="padding: 4px 8px; font-size: 12px;" onclick="return confirm('Yakin ingin menghapus unit ini?');">Hapus</button>
                         </form>

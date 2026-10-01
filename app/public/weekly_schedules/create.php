@@ -5,18 +5,28 @@ require_once '../../config/auth.php';
 require_once '../../config/security.php';
 require_once '../../includes/functions.php';
 
-requireSuperAdmin();
+requireLogin();
+checkUserAccess('master_schedules');
+$currentRole = currentRole();
 $pageTitle = 'Tambah Jadwal Pekanan';
+$userId = currentUserId();
+
+$ksUnitId = 0;
+if ($currentRole === 'kepala_sekolah') {
+    $stmtKs = $pdo->prepare("SELECT unit_id FROM admin_unit_permissions WHERE user_id = ? LIMIT 1");
+    $stmtKs->execute([$userId]);
+    $ksUnitId = (int)$stmtKs->fetchColumn();
+}
 
 $units = $pdo->query("SELECT * FROM units ORDER BY id ASC")->fetchAll();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $unitId = (int)$_POST['unit_id'];
-    $dayCodes = $_POST['day_codes'] ?? []; // Menangkap array checkbox
+    $unitId = $currentRole === 'super_admin' ? (int)$_POST['unit_id'] : $ksUnitId;
+    $dayCodes = $_POST['day_codes'] ?? []; 
     
     $days = [1=>'Senin', 2=>'Selasa', 3=>'Rabu', 4=>'Kamis', 5=>'Jumat', 6=>'Sabtu', 7=>'Minggu'];
 
-    if (!empty($dayCodes) && is_array($dayCodes)) {
+    if (!empty($dayCodes) && is_array($dayCodes) && $unitId > 0) {
         $stmt = $pdo->prepare("
             INSERT INTO weekly_schedules 
             (unit_id, day_name, day_code, student_in, student_late, student_out, staff_in, staff_late, staff_out, is_active)
@@ -39,9 +49,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
             $pdo->commit();
+            flash('success', 'Jadwal pekanan berhasil ditambahkan.');
         } catch (Exception $e) {
             $pdo->rollBack();
-            die("Terjadi kesalahan saat menyimpan data.");
+            flash('error', 'Terjadi kesalahan saat menyimpan data.');
         }
     }
 
@@ -59,13 +70,24 @@ require '../../includes/header.php';
     <form method="POST">
         <div class="form-grid">
             <div class="form-group full">
-                <label>Pilih Unit</label>
-                <select name="unit_id" required>
-                    <option value="">Pilih Unit...</option>
-                    <?php foreach ($units as $unit): ?>
-                        <option value="<?= $unit['id'] ?>"><?= e($unit['unit']) ?></option>
-                    <?php endforeach; ?>
-                </select>
+                <label>Pilih Unit *</label>
+                <?php if ($currentRole === 'super_admin'): ?>
+                    <select name="unit_id" required>
+                        <option value="">Pilih Unit...</option>
+                        <?php foreach ($units as $unit): ?>
+                            <option value="<?= $unit['id'] ?>"><?= e($unit['unit']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                <?php else: ?>
+                    <?php 
+                        $unitNameStr = '-';
+                        foreach ($units as $u) {
+                            if($u['id'] == $ksUnitId) { $unitNameStr = $u['unit']; break; }
+                        }
+                    ?>
+                    <input type="text" value="<?= e($unitNameStr) ?>" disabled style="background:#f1f5f9; cursor:not-allowed;">
+                    <small style="color:#0284c7;">Otomatis ditambahkan ke unit Anda.</small>
+                <?php endif; ?>
             </div>
             
             <div class="form-group full">

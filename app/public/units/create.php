@@ -5,7 +5,8 @@ require_once '../../config/auth.php';
 require_once '../../config/security.php';
 require_once '../../includes/functions.php';
 
-requireSuperAdmin();
+requireLogin();
+checkUserAccess('master_units');
 $pageTitle = 'Tambah Unit';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {

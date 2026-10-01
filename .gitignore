@@ -24,6 +24,7 @@
 *.rar
 *.7z
 *.bak
+backups/
 
 # Logs and databases
 *.log

@@ -5,10 +5,29 @@ require_once '../../config/auth.php';
 require_once '../../config/security.php';
 require_once '../../includes/functions.php';
 
-requireSuperAdmin();
-$pageTitle = 'Grade';
+requireLogin();
+checkUserAccess('master_grades');
+$currentRole = currentRole();
+$pageTitle = 'Grade / Tingkat';
+$userId = currentUserId();
 
-$grades = $pdo->query("
+$whereSql = "";
+$params = [];
+
+if ($currentRole === 'kepala_sekolah') {
+    $stmtKs = $pdo->prepare("SELECT unit_id FROM admin_unit_permissions WHERE user_id = ? LIMIT 1");
+    $stmtKs->execute([$userId]);
+    $ksUnitId = $stmtKs->fetchColumn();
+    
+    if ($ksUnitId) {
+        $whereSql = "WHERE g.unit_id = ?";
+        $params[] = $ksUnitId;
+    } else {
+        $whereSql = "WHERE 1 = 0"; // Jika tidak punya unit, sembunyikan semua
+    }
+}
+
+$grades = $pdo->prepare("
     SELECT 
         g.*, 
         un.unit AS unit_name,
@@ -16,27 +35,23 @@ $grades = $pdo->query("
     FROM grades g
     LEFT JOIN units un ON un.id = g.unit_id
     LEFT JOIN class_groups cg ON cg.grade_id = g.id
+    {$whereSql}
     GROUP BY g.id
     ORDER BY un.id ASC, g.sort_order ASC, g.grade ASC
-")->fetchAll();
+");
+$grades->execute($params);
+$gradesData = $grades->fetchAll();
 
 require '../../includes/header.php';
 ?>
 
 <div class="card">
     <div class="card-header">
-        <h3 style="display: flex; align-items: center; gap: 8px;">
-            <i class="fa-solid fa-layer-group" style="color: var(--primary);"></i>
-            Data Grade
-        </h3>
-        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-            <a href="import.php" class="btn btn-success" style="background-color: #10b981; color: white;">
-                <i class="fa-solid fa-file-excel"></i> Import Grade
-            </a>
-            <a href="create.php" class="btn btn-primary">
-                <i class="fa-solid fa-plus"></i> Tambah Grade
-            </a>
+        <div>
+            <h3>Grade / Tingkat Kelas</h3>
+            <small><?= $currentRole === 'kepala_sekolah' ? 'Menampilkan data khusus Unit Anda.' : 'Menampilkan seluruh data Grade.' ?></small>
         </div>
+        <a href="create.php" class="btn btn-primary">+ Tambah Grade</a>
     </div>
 
     <div class="table-wrapper">
@@ -47,12 +62,16 @@ require '../../includes/header.php';
                     <th>Unit</th>
                     <th>Grade</th>
                     <th>Urutan</th>
-                    <th>Subkelas</th>
+                    <th>Total Subkelas</th>
                     <th>Aksi</th>
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($grades as $index => $grade): ?>
+                <?php if (!$gradesData): ?>
+                    <tr><td colspan="6" style="text-align:center">Data grade tidak ditemukan.</td></tr>
+                <?php endif; ?>
+
+                <?php foreach ($gradesData as $index => $grade): ?>
                 <tr>
                     <td><?= $index + 1 ?></td>
                     <td>
@@ -65,11 +84,14 @@ require '../../includes/header.php';
                     <td><?= number_format($grade['total_classes']) ?></td>
                     <td>
                         <a href="edit.php?id=<?= $grade['id'] ?>" class="btn btn-success" style="padding: 4px 8px; font-size:12px;">Edit</a>
+                        
+                        <!-- TOMBOL HAPUS SEKARANG BISA DIAKSES SUPER ADMIN & KEPSEK -->
+                        <?php if (in_array($currentRole, ['super_admin', 'kepala_sekolah'])): ?>
                         <form method="POST" action="delete.php" style="display:inline" onsubmit="return confirm('Hapus grade ini?')">
-                            <?= csrfField() ?>
                             <input type="hidden" name="id" value="<?= $grade['id'] ?>">
                             <button type="submit" class="btn btn-danger" style="padding: 4px 8px; font-size:12px;">Hapus</button>
                         </form>
+                        <?php endif; ?>
                     </td>
                 </tr>
                 <?php endforeach; ?>

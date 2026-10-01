@@ -1,41 +1,39 @@
 <?php
-
 require_once '../../config/config.php';
 require_once '../../config/database.php';
 require_once '../../config/auth.php';
 require_once '../../config/security.php';
 require_once '../../includes/functions.php';
 
-requireSuperAdmin();
-requireCsrf();
+requireLogin();
+checkUserAccess('master_activities');
+$currentRole = currentRole();
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    redirect('index.php');
+}
 
+$id = (int)($_POST['id'] ?? 0);
+$userId = currentUserId();
 
-$id =
-    (int)($_POST['id'] ?? 0);
+// BENTENG KEAMANAN
+if ($currentRole === 'kepala_sekolah') {
+    $stmtKs = $pdo->prepare("SELECT unit_id FROM admin_unit_permissions WHERE user_id = ? LIMIT 1");
+    $stmtKs->execute([$userId]);
+    $ksUnitId = $stmtKs->fetchColumn();
 
+    $stmtAct = $pdo->prepare("SELECT unit_id FROM activities WHERE id = ?");
+    $stmtAct->execute([$id]);
+    $actUnitId = $stmtAct->fetchColumn();
 
-$stmt =
-    $pdo->prepare("
-        UPDATE activities
+    if ($actUnitId != $ksUnitId) {
+        flash('error', 'Akses ditolak. Anda tidak bisa menutup jadwal kegiatan unit lain.');
+        redirect('index.php');
+        exit;
+    }
+}
 
-        SET status = 'closed'
+$stmt = $pdo->prepare("UPDATE activities SET status = 'closed' WHERE id = ?");
+$stmt->execute([$id]);
 
-        WHERE id = ?
-    ");
-
-$stmt->execute([
-    $id
-]);
-
-logAudit($pdo, 'close', 'activities', $id);
-
-
-flash(
-    'success',
-    'Activity ditutup.'
-);
-
-
-redirect(
-    'index.php'
-);
+flash('success', 'Kegiatan berhasil ditutup.');
+redirect('index.php');

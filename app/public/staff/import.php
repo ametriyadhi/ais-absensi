@@ -5,7 +5,8 @@ require_once '../../config/auth.php';
 require_once '../../config/security.php';
 require_once '../../includes/functions.php';
 
-requireSuperAdmin(); 
+requireLogin();
+checkUserAccess('master_staff'); 
 $pageTitle = 'Import Staff XLSX';
 
 function parseXlsxFile($filePath) {
@@ -55,66 +56,18 @@ $unitsMap = $pdo->query("SELECT id, unit FROM units")->fetchAll(PDO::FETCH_KEY_P
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['file_excel'])) {
     $uploadedPhotos = [];
-    $tempZipDir = null;
-
     if (!empty($_FILES['photos']['name'][0])) {
         foreach ($_FILES['photos']['name'] as $i => $origName) {
             if ($_FILES['photos']['error'][$i] === UPLOAD_ERR_OK) {
-                $trimmedName = trim($origName);
-                $ext = strtolower(pathinfo($trimmedName, PATHINFO_EXTENSION));
-                $tmpPath = $_FILES['photos']['tmp_name'][$i];
-
-                if ($ext === 'zip') {
-                    if (class_exists('ZipArchive')) {
-                        $zip = new ZipArchive();
-                        if ($zip->open($tmpPath) === true) {
-                            $tempZipDir = sys_get_temp_dir() . '/zip_staff_photos_' . uniqid();
-                            @mkdir($tempZipDir, 0755, true);
-                            for ($z = 0; $z < $zip->numFiles; $z++) {
-                                $entryName = $zip->getNameIndex($z);
-                                if (str_starts_with($entryName, '__MACOSX') || str_ends_with($entryName, '/')) {
-                                    continue;
-                                }
-                                $entryBase = basename($entryName);
-                                $entryExt = strtolower(pathinfo($entryBase, PATHINFO_EXTENSION));
-                                if (in_array($entryExt, ['jpg', 'jpeg', 'png', 'webp'])) {
-                                    $targetPath = $tempZipDir . '/' . uniqid() . '_' . $entryBase;
-                                    copy("zip://" . $tmpPath . "#" . $entryName, $targetPath);
-                                    $uploadedPhotos[strtolower($entryBase)] = [
-                                        'path'      => $targetPath,
-                                        'orig'      => $entryBase,
-                                        'is_upload' => false
-                                    ];
-                                }
-                            }
-                            $zip->close();
-                        }
-                    }
-                } elseif (in_array($ext, ['jpg', 'jpeg', 'png', 'webp'])) {
-                    $uploadedPhotos[strtolower($trimmedName)] = [
-                        'path'      => $tmpPath,
-                        'orig'      => $trimmedName,
-                        'is_upload' => true
-                    ];
-                }
+                $uploadedPhotos[$origName] = $_FILES['photos']['tmp_name'][$i];
             }
-        }
-    }
-
-    $uploadDir = '../../uploads/staff/';
-    $existingDiskStaffPhotos = [];
-    if (is_dir($uploadDir)) {
-        $scan = scandir($uploadDir);
-        foreach ($scan as $f) {
-            if ($f === '.' || $f === '..' || str_ends_with(strtolower($f), '.zip')) continue;
-            $existingDiskStaffPhotos[strtolower($f)] = $f;
         }
     }
 
     try {
         $rows = parseXlsxFile($_FILES['file_excel']['tmp_name']);
         if ($rows) {
-            $success = 0; $failed = 0; $photosMatched = 0;
+            $success = 0; $failed = 0;
             $pdo->beginTransaction();
             
             $stmtUser = $pdo->prepare("INSERT INTO users (username, password, name, role, created_at) VALUES (?, ?, ?, 'staff', NOW())");
@@ -134,56 +87,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['file_excel'])) {
                     if (!$unitId) { $failed++; continue; } 
 
                     $photoNameSave = null;
-                    if (!empty($namaFileFoto)) {
-                        $trimmedFoto = trim($namaFileFoto);
-                        $lowerFotoName = strtolower($trimmedFoto);
-                        $photoExt = strtolower(pathinfo($trimmedFoto, PATHINFO_EXTENSION));
-
-                        $candidates = [$lowerFotoName];
-                        if (empty($photoExt)) {
-                            foreach (['jpg', 'jpeg', 'png', 'webp'] as $testExt) {
-                                $candidates[] = $lowerFotoName . '.' . $testExt;
-                            }
-                        }
-
-                        $sourcePath = null;
-                        $isTempUploaded = false;
-                        $matchedExt = $photoExt;
-
-                        foreach ($candidates as $cand) {
-                            if (isset($uploadedPhotos[$cand])) {
-                                $sourcePath = $uploadedPhotos[$cand]['path'];
-                                $isTempUploaded = $uploadedPhotos[$cand]['is_upload'];
-                                $matchedExt = strtolower(pathinfo($uploadedPhotos[$cand]['orig'], PATHINFO_EXTENSION));
-                                break;
-                            }
-                        }
-
-                        if (!$sourcePath && is_dir($uploadDir)) {
-                            foreach ($candidates as $cand) {
-                                if (file_exists($uploadDir . $cand)) {
-                                    $sourcePath = $uploadDir . $cand;
-                                    $matchedExt = strtolower(pathinfo($cand, PATHINFO_EXTENSION));
-                                    break;
-                                }
-                                if (isset($existingDiskStaffPhotos[$cand])) {
-                                    $sourcePath = $uploadDir . $existingDiskStaffPhotos[$cand];
-                                    $matchedExt = strtolower(pathinfo($existingDiskStaffPhotos[$cand], PATHINFO_EXTENSION));
-                                    break;
-                                }
-                            }
-                        }
-
-                        if ($sourcePath && file_exists($sourcePath) && in_array($matchedExt, ['jpg', 'jpeg', 'png', 'webp'])) {
-                            if (!is_dir($uploadDir)) { mkdir($uploadDir, 0755, true); }
-                            $photoNameSave = uniqid('staff_', true) . '.' . $matchedExt;
-                            if ($isTempUploaded && is_uploaded_file($sourcePath)) {
-                                move_uploaded_file($sourcePath, $uploadDir . $photoNameSave);
-                            } else {
-                                copy($sourcePath, $uploadDir . $photoNameSave);
-                            }
-                            $photosMatched++;
-                        }
+                    if (!empty($namaFileFoto) && isset($uploadedPhotos[$namaFileFoto])) {
+                        $uploadDir = '../../uploads/staff/';
+                        if (!is_dir($uploadDir)) { mkdir($uploadDir, 0755, true); }
+                        $ext = pathinfo($namaFileFoto, PATHINFO_EXTENSION);
+                        $photoNameSave = uniqid('staff_', true) . '.' . $ext;
+                        move_uploaded_file($uploadedPhotos[$namaFileFoto], $uploadDir . $photoNameSave);
                     }
                     
                     // Eksekusi insert user & staff
@@ -197,31 +106,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['file_excel'])) {
                 }
             }
             $pdo->commit();
-
-            if (!empty($tempZipDir) && is_dir($tempZipDir)) {
-                $tempFiles = scandir($tempZipDir);
-                foreach ($tempFiles as $tf) {
-                    if ($tf !== '.' && $tf !== '..') {
-                        @unlink($tempZipDir . '/' . $tf);
-                    }
-                }
-                @rmdir($tempZipDir);
-            }
-
-            flash('success', "Import Staff selesai! Berhasil: $success, Gagal/Lewat: $failed, Foto Berhasil Terpasang: $photosMatched.");
+            flash('success', "Import Staff selesai! Berhasil: $success, Gagal/Lewat: $failed.");
             redirect('index.php');
         }
     } catch (Exception $e) {
         if ($pdo->inTransaction()) { $pdo->rollBack(); }
-        if (!empty($tempZipDir) && is_dir($tempZipDir)) {
-            $tempFiles = scandir($tempZipDir);
-            foreach ($tempFiles as $tf) {
-                if ($tf !== '.' && $tf !== '..') {
-                    @unlink($tempZipDir . '/' . $tf);
-                }
-            }
-            @rmdir($tempZipDir);
-        }
         flash('error', $e->getMessage());
     }
 }
@@ -249,9 +138,9 @@ require '../../includes/header.php';
             <input type="file" name="file_excel" accept=".xlsx" required style="padding: 10px; border: 1px dashed #94a3b8; width: 100%; border-radius: 5px;">
         </div>
         <div class="form-group">
-            <label>2. Upload File Foto Sekaligus (Pilih Banyak File Foto atau 1 File .ZIP)</label>
-            <input type="file" name="photos[]" multiple accept="image/*,.zip,application/zip" style="padding: 10px; border: 1px dashed #94a3b8; width: 100%; border-radius: 5px;">
-            <small>Pilih banyak file foto sekaligus ATAU unggah 1 file .zip foto. Sistem otomatis mencocokkan nama file dengan Kolom F Excel atau mengecek folder server uploads/staff/.</small>
+            <label>2. Upload File Foto Sekaligus (Blok/Pilih Semua File Foto)</label>
+            <input type="file" name="photos[]" multiple accept="image/*" style="padding: 10px; border: 1px dashed #94a3b8; width: 100%; border-radius: 5px;">
+            <small>Sistem akan otomatis mencocokkan nama file ini dengan yang Anda ketik di Kolom F Excel.</small>
         </div>
         <div style="margin-top: 20px;">
             <button type="submit" class="btn btn-primary">Mulai Import</button>

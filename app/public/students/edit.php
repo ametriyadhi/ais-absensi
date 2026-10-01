@@ -5,21 +5,39 @@ require_once '../../config/auth.php';
 require_once '../../config/security.php';
 require_once '../../includes/functions.php';
 
-requireSuperAdmin();
+requireLogin();
+checkUserAccess('master_students');
+$currentRole = currentRole();
 $pageTitle = 'Edit Siswa';
-
+$userId = currentUserId();
 $id = (int)($_GET['id'] ?? 0);
 
-if ($id <= 0) {
-    redirect('index.php');
-}
+if ($id <= 0) { redirect('index.php'); }
 
-$stmt = $pdo->prepare("SELECT * FROM students WHERE id = ? AND deleted_at IS NULL LIMIT 1");
+// BENTENG KEAMANAN: Pastikan Kepala Sekolah tidak mengedit siswa Unit lain
+$stmt = $pdo->prepare("
+    SELECT s.*, g.unit_id 
+    FROM students s
+    LEFT JOIN student_enrollments se ON se.student_id = s.id AND se.status = 'active'
+    LEFT JOIN class_groups cg ON cg.id = se.class_group_id
+    LEFT JOIN grades g ON g.id = cg.grade_id
+    WHERE s.id = ? AND s.deleted_at IS NULL LIMIT 1
+");
 $stmt->execute([$id]);
 $student = $stmt->fetch();
 
-if (!$student) {
-    die('Data siswa tidak ditemukan.');
+if (!$student) { die('Data siswa tidak ditemukan.'); }
+
+if ($currentRole === 'kepala_sekolah') {
+    $stmtKs = $pdo->prepare("SELECT unit_id FROM admin_unit_permissions WHERE user_id = ? LIMIT 1");
+    $stmtKs->execute([$userId]);
+    $ksUnitId = $stmtKs->fetchColumn();
+
+    // Jika siswa punya unit dan unitnya BEDA dengan unit Kepsek
+    if ($student['unit_id'] && $student['unit_id'] != $ksUnitId) {
+        flash('error', 'Akses ditolak. Siswa ini berada di unit yang berbeda.');
+        redirect('index.php');
+    }
 }
 
 // Cek status pendaftaran aktif (enrollment)
@@ -31,25 +49,36 @@ $stmt = $pdo->prepare("
 $stmt->execute([$id]);
 $enrollment = $stmt->fetch();
 
-// Ambil ID Tahun Ajaran Aktif untuk skenario insert
 $stmtAy = $pdo->query("SELECT id FROM academic_years WHERE status = 'active' LIMIT 1");
-$activeAy = $stmtAy->fetch();
-$activeAyId = $activeAy['id'] ?? 0;
+$activeAyId = $stmtAy->fetchColumn() ?: 0;
 
-$classGroups = $pdo->query("
-    SELECT cg.id, cg.name, g.grade FROM class_groups cg
-    INNER JOIN grades g ON g.id = cg.grade_id
-    ORDER BY g.sort_order, cg.name
-")->fetchAll();
+// Ambil opsi Class Groups (Dibatasi untuk Kepsek)
+$cgSql = "
+    SELECT cg.id, cg.name, g.grade 
+    FROM class_groups cg
+    INNER JOIN grades g ON g.id = cg.grade_id 
+";
+$cgParams = [];
+if ($currentRole === 'kepala_sekolah') {
+    $cgSql .= " WHERE g.unit_id = ? ";
+    $cgParams[] = $ksUnitId;
+}
+$cgSql .= " ORDER BY g.sort_order, cg.name";
+$stmtCg = $pdo->prepare($cgSql);
+$stmtCg->execute($cgParams);
+$classGroups = $stmtCg->fetchAll();
 
 $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    requireCsrf();
     $name = trim($_POST['name'] ?? '');
     $nis = trim($_POST['nis'] ?? '');
     $nik = trim($_POST['nik'] ?? '');
     $parentPhone = trim($_POST['parent_phone'] ?? '');
+    $waNotify = isset($_POST['wa_notify']) ? 1 : 0;
+    $rfidUid = trim($_POST['rfid_uid'] ?? '');
+    $fingerprintId = trim($_POST['fingerprint_id'] ?? '');
+    $fingerprintId = ($fingerprintId !== '' && is_numeric($fingerprintId)) ? (int)$fingerprintId : null;
     $classGroupId = (int)($_POST['class_group_id'] ?? 0);
 
     if ($name === '' || $classGroupId <= 0) {
@@ -70,18 +99,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 move_uploaded_file($_FILES['photo']['tmp_name'], UPLOAD_STUDENT . $newPhoto);
             }
 
-            // Update profil siswa dasar
             if ($newPhoto) {
-                $sql = "UPDATE students SET name = ?, nis = ?, nik = ?, parent_phone = ?, photo = ? WHERE id = ?";
-                $params = [$name, $nis !== '' ? $nis : null, $nik !== '' ? $nik : null, $parentPhone !== '' ? $parentPhone : null, $newPhoto, $id];
+                $sql = "UPDATE students SET name = ?, nis = ?, nik = ?, parent_phone = ?, wa_notify = ?, rfid_uid = ?, fingerprint_id = ?, photo = ? WHERE id = ?";
+                $params = [
+                    $name, 
+                    $nis !== '' ? $nis : null, 
+                    $nik !== '' ? $nik : null, 
+                    $parentPhone !== '' ? $parentPhone : null, 
+                    $waNotify, 
+                    $rfidUid !== '' ? strtoupper($rfidUid) : null,
+                    $fingerprintId,
+                    $newPhoto, 
+                    $id
+                ];
             } else {
-                $sql = "UPDATE students SET name = ?, nis = ?, nik = ?, parent_phone = ? WHERE id = ?";
-                $params = [$name, $nis !== '' ? $nis : null, $nik !== '' ? $nik : null, $parentPhone !== '' ? $parentPhone : null, $id];
+                $sql = "UPDATE students SET name = ?, nis = ?, nik = ?, parent_phone = ?, wa_notify = ?, rfid_uid = ?, fingerprint_id = ? WHERE id = ?";
+                $params = [
+                    $name, 
+                    $nis !== '' ? $nis : null, 
+                    $nik !== '' ? $nik : null, 
+                    $parentPhone !== '' ? $parentPhone : null, 
+                    $waNotify, 
+                    $rfidUid !== '' ? strtoupper($rfidUid) : null,
+                    $fingerprintId,
+                    $id
+                ];
             }
             $stmt = $pdo->prepare($sql);
             $stmt->execute($params);
 
-            // LOGIKA PERBAIKAN: Jika pendaftaran belum ada, maka buatkan pendaftaran baru (INSERT)
             if ($enrollment) {
                 $stmt = $pdo->prepare("UPDATE student_enrollments SET class_group_id = ? WHERE id = ?");
                 $stmt->execute([$classGroupId, $enrollment['id']]);
@@ -95,7 +141,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $pdo->commit();
-            logAudit($pdo, 'update', 'students', $id, ['name' => $name, 'nis' => $nis]);
 
             if ($newPhoto && !empty($student['photo']) && file_exists(UPLOAD_STUDENT . $student['photo'])) {
                 unlink(UPLOAD_STUDENT . $student['photo']);
@@ -124,7 +169,6 @@ require '../../includes/header.php';
     <?php endif; ?>
 
     <form method="POST" enctype="multipart/form-data">
-        <?= csrfField() ?>
         <div class="form-grid">
             <div class="form-group">
                 <label>Nama Siswa</label>
@@ -138,10 +182,6 @@ require '../../includes/header.php';
                 <label>NIK</label>
                 <input type="text" name="nik" value="<?= e($student['nik']) ?>">
             </div>
-            <div class="form-group">
-                <label>No. WhatsApp Orang Tua / Wali</label>
-                <input type="text" name="parent_phone" placeholder="Contoh: 08123456789" value="<?= e($student['parent_phone'] ?? '') ?>">
-            </div>
 
             <div class="form-group">
                 <label>Subkelas Tahun Aktif</label>
@@ -153,6 +193,31 @@ require '../../includes/header.php';
                         </option>
                     <?php endforeach; ?>
                 </select>
+            </div>
+
+            <div class="form-group">
+                <label><i class="fa-solid fa-id-card" style="color: #6366f1;"></i> RFID Card UID (ESP32 / Tap Card)</label>
+                <input type="text" name="rfid_uid" placeholder="Contoh: A4B2C19F" value="<?= e($student['rfid_uid'] ?? '') ?>">
+                <small style="color: #64748b;">UID kartu RFID MFRC522 (bisa di-tap langsung jika ada reader USB).</small>
+            </div>
+
+            <div class="form-group">
+                <label><i class="fa-solid fa-fingerprint" style="color: #0ea5e9;"></i> Fingerprint ID (Sensor Sidik Jari)</label>
+                <input type="number" name="fingerprint_id" min="1" max="1000" placeholder="Contoh: 12" value="<?= e($student['fingerprint_id'] ?? '') ?>">
+                <small style="color: #64748b;">Nomor ID slot sidik jari yang didaftarkan pada sensor ESP32 (1 - 1000).</small>
+            </div>
+
+            <div class="form-group">
+                <label><i class="fa-brands fa-whatsapp" style="color: #10b981;"></i> Nomor WhatsApp Orang Tua / Wali</label>
+                <input type="text" name="parent_phone" placeholder="Contoh: 081234567890" value="<?= e($student['parent_phone'] ?? '') ?>">
+                <small style="color: #64748b;">Nomor tujuan untuk notifikasi otomatis masuk, telat, dan pulang.</small>
+            </div>
+
+            <div class="form-group" style="display: flex; flex-direction: column; justify-content: center;">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-top: 15px; font-weight: 600;">
+                    <input type="checkbox" name="wa_notify" value="1" <?= (!isset($student['wa_notify']) || (int)$student['wa_notify'] === 1) ? 'checked' : '' ?> style="width: 18px; height: 18px; accent-color: #10b981;">
+                    <span>Aktifkan Notifikasi WhatsApp untuk Siswa Ini</span>
+                </label>
             </div>
 
             <div class="form-group full">
@@ -173,5 +238,4 @@ require '../../includes/header.php';
         </div>
     </form>
 </div>
-
 <?php require '../../includes/footer.php'; ?>

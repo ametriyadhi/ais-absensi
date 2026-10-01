@@ -5,8 +5,8 @@ require_once '../../config/auth.php';
 require_once '../../config/security.php';
 require_once '../../includes/functions.php';
 
-requireSuperAdmin();
-requireCsrf();
+requireLogin();
+checkUserAccess('master_admins');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     redirect('index.php');
@@ -19,7 +19,7 @@ if ($id === currentUserId()) {
 }
 
 // Cek dan Hapus file foto
-$stmt = $pdo->prepare("SELECT username, photo FROM users WHERE id = ? LIMIT 1");
+$stmt = $pdo->prepare("SELECT photo FROM users WHERE id = ? LIMIT 1");
 $stmt->execute([$id]);
 $admin = $stmt->fetch();
 
@@ -33,8 +33,6 @@ if ($admin && !empty($admin['photo'])) {
 // Update ke Database
 $stmt = $pdo->prepare("UPDATE users SET deleted_at = NOW() WHERE id = ? AND role = 'admin'");
 $stmt->execute([$id]);
-
-logAudit($pdo, 'delete', 'admins', $id, ['username' => $admin['username'] ?? '']);
 
 flash('success', 'Admin berhasil dihapus.');
 redirect('index.php');

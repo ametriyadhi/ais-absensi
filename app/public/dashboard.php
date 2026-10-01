@@ -8,6 +8,7 @@ require_once '../includes/functions.php';
 requireLogin();
 $pageTitle = 'Dashboard';
 $role = $_SESSION['role'];
+$userId = currentUserId();
 
 /*
 |--------------------------------------------------------------------------
@@ -23,14 +24,45 @@ $chartLabels = [];
 $chartOntime = [];
 $chartLate = [];
 
-if ($role !== 'super_admin') {
-    $chartType = 'student';
-}
 $tableTarget = $chartType === 'student' ? 'student_attendances' : 'staff_attendances';
 
-$whereCondition = "WHERE YEAR(sa.attendance_date) = ?";
-$paramsChart = [$filterYear];
+// Menyusun Dynamic Join dan Where berdasarkan Role
+$joinSql = "";
+$whereSql = "WHERE YEAR(sa.attendance_date) = :year";
+$queryParams = [':year' => $filterYear];
 
+if ($filterMode === 'month') {
+    $whereSql .= " AND MONTH(sa.attendance_date) = :month";
+    $queryParams[':month'] = $filterMonth;
+}
+
+if ($role === 'kepala_sekolah') {
+    if ($chartType === 'student') {
+        $joinSql = "INNER JOIN student_enrollments se ON se.id = sa.enrollment_id
+                    INNER JOIN class_groups cg ON cg.id = se.class_group_id
+                    INNER JOIN grades g ON g.id = cg.grade_id";
+        $whereSql .= " AND g.unit_id IN (SELECT unit_id FROM admin_unit_permissions WHERE user_id = :ks_id)";
+        $queryParams[':ks_id'] = $userId;
+    } else {
+        $joinSql = "INNER JOIN staff st ON st.id = sa.staff_id";
+        $whereSql .= " AND st.unit_id IN (SELECT unit_id FROM admin_unit_permissions WHERE user_id = :ks_id)";
+        $queryParams[':ks_id'] = $userId;
+    }
+} elseif ($role === 'admin') {
+    if ($chartType === 'student') {
+        $joinSql = "INNER JOIN student_enrollments se ON se.id = sa.enrollment_id
+                    INNER JOIN class_groups cg ON cg.id = se.class_group_id
+                    INNER JOIN grades g ON g.id = cg.grade_id";
+        $whereSql .= " AND (g.id IN (SELECT grade_id FROM admin_grade_permissions WHERE user_id = :adm_id1) 
+                       OR cg.id IN (SELECT class_group_id FROM admin_class_permissions WHERE user_id = :adm_id2))";
+        $queryParams[':adm_id1'] = $userId;
+        $queryParams[':adm_id2'] = $userId;
+    } else {
+        $whereSql .= " AND 1 = 0"; // Admin tidak dapat melihat chart staff
+    }
+}
+
+// Menyiapkan Labels & Default Data array (0)
 if ($filterMode === 'month') {
     $daysInMonth = cal_days_in_month(CAL_GREGORIAN, $filterMonth, $filterYear);
     for ($i = 1; $i <= $daysInMonth; $i++) {
@@ -38,8 +70,7 @@ if ($filterMode === 'month') {
         $chartOntime[$i] = 0;
         $chartLate[$i] = 0;
     }
-    $whereCondition .= " AND MONTH(sa.attendance_date) = ?";
-    $paramsChart[] = $filterMonth;
+    $selectLabel = "DAY(sa.attendance_date)";
 } else {
     $months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
     foreach ($months as $i => $m) {
@@ -47,33 +78,19 @@ if ($filterMode === 'month') {
         $chartOntime[$i+1] = 0;
         $chartLate[$i+1] = 0;
     }
+    $selectLabel = "MONTH(sa.attendance_date)";
 }
 
-if ($role !== 'super_admin' && $chartType === 'student') {
-    $joinSql = "
-        JOIN student_enrollments se ON se.id = sa.enrollment_id
-        JOIN class_groups cg ON cg.id = se.class_group_id
-        JOIN grades g ON g.id = cg.grade_id
-    ";
-    $whereCondition .= " AND (g.id IN (SELECT grade_id FROM admin_grade_permissions WHERE user_id = ?) 
-                         OR cg.id IN (SELECT class_group_id FROM admin_class_permissions WHERE user_id = ?))";
-    $paramsChart[] = currentUserId();
-    $paramsChart[] = currentUserId();
-} else {
-    $joinSql = "";
-}
-
-$groupCol = ($filterMode === 'month') ? 'DAY(sa.attendance_date)' : 'MONTH(sa.attendance_date)';
 $stmtChart = $pdo->prepare("
-    SELECT {$groupCol} as label, sa.status, COUNT(sa.id) as total 
+    SELECT {$selectLabel} as label, sa.status, COUNT(sa.id) as total 
     FROM {$tableTarget} sa
     {$joinSql}
-    {$whereCondition}
-    GROUP BY {$groupCol}, sa.status
+    {$whereSql}
+    GROUP BY label, sa.status
 ");
-$stmtChart->execute($paramsChart);
-
+$stmtChart->execute($queryParams);
 $chartData = $stmtChart->fetchAll();
+
 foreach ($chartData as $row) {
     $idx = (int)$row['label'];
     if ($row['status'] === 'tepat_waktu') {
@@ -97,44 +114,29 @@ if ($role === 'super_admin') {
     $totalStaff = $pdo->query("SELECT COUNT(*) FROM staff WHERE deleted_at IS NULL")->fetchColumn();
     $todayTotal = $pdo->query("SELECT COUNT(*) FROM student_attendances WHERE attendance_date = CURDATE()")->fetchColumn();
     $todayLate = $pdo->query("SELECT COUNT(*) FROM student_attendances WHERE attendance_date = CURDATE() AND status = 'terlambat'")->fetchColumn();
-} else {
-    $stmt = $pdo->prepare("
-        SELECT COUNT(DISTINCT s.id) FROM students s
-        JOIN student_enrollments se ON se.student_id = s.id
-        JOIN class_groups cg ON cg.id = se.class_group_id
-        JOIN grades g ON g.id = cg.grade_id
-        JOIN academic_years ay ON ay.id = se.academic_year_id
-        WHERE s.deleted_at IS NULL AND ay.status = 'active'
-        AND (g.id IN (SELECT grade_id FROM admin_grade_permissions WHERE user_id = ?) 
-        OR cg.id IN (SELECT class_group_id FROM admin_class_permissions WHERE user_id = ?))
-    ");
-    $stmt->execute([currentUserId(), currentUserId()]);
-    $totalStudents = $stmt->fetchColumn();
+} elseif ($role === 'kepala_sekolah') {
+    $stmt1 = $pdo->prepare("SELECT COUNT(DISTINCT s.id) FROM students s JOIN student_enrollments se ON se.student_id = s.id JOIN class_groups cg ON cg.id = se.class_group_id JOIN grades g ON g.id = cg.grade_id JOIN academic_years ay ON ay.id = se.academic_year_id WHERE s.deleted_at IS NULL AND ay.status = 'active' AND g.unit_id IN (SELECT unit_id FROM admin_unit_permissions WHERE user_id = ?)");
+    $stmt1->execute([$userId]); $totalStudents = $stmt1->fetchColumn();
+    
+    $stmt2 = $pdo->prepare("SELECT COUNT(*) FROM staff WHERE deleted_at IS NULL AND unit_id IN (SELECT unit_id FROM admin_unit_permissions WHERE user_id = ?)");
+    $stmt2->execute([$userId]); $totalStaff = $stmt2->fetchColumn();
+    
+    $stmt3 = $pdo->prepare("SELECT COUNT(*) FROM student_attendances sa JOIN student_enrollments se ON se.id = sa.enrollment_id JOIN class_groups cg ON cg.id = se.class_group_id JOIN grades g ON g.id = cg.grade_id WHERE sa.attendance_date = CURDATE() AND g.unit_id IN (SELECT unit_id FROM admin_unit_permissions WHERE user_id = ?)");
+    $stmt3->execute([$userId]); $todayTotal = $stmt3->fetchColumn();
+    
+    $stmt4 = $pdo->prepare("SELECT COUNT(*) FROM student_attendances sa JOIN student_enrollments se ON se.id = sa.enrollment_id JOIN class_groups cg ON cg.id = se.class_group_id JOIN grades g ON g.id = cg.grade_id WHERE sa.attendance_date = CURDATE() AND sa.status = 'terlambat' AND g.unit_id IN (SELECT unit_id FROM admin_unit_permissions WHERE user_id = ?)");
+    $stmt4->execute([$userId]); $todayLate = $stmt4->fetchColumn();
+} else { // admin
+    $stmt1 = $pdo->prepare("SELECT COUNT(DISTINCT s.id) FROM students s JOIN student_enrollments se ON se.student_id = s.id JOIN class_groups cg ON cg.id = se.class_group_id JOIN grades g ON g.id = cg.grade_id JOIN academic_years ay ON ay.id = se.academic_year_id WHERE s.deleted_at IS NULL AND ay.status = 'active' AND (g.id IN (SELECT grade_id FROM admin_grade_permissions WHERE user_id = ?) OR cg.id IN (SELECT class_group_id FROM admin_class_permissions WHERE user_id = ?))");
+    $stmt1->execute([$userId, $userId]); $totalStudents = $stmt1->fetchColumn();
+    
     $totalStaff = 0;
 
-    $stmt = $pdo->prepare("
-        SELECT COUNT(*) FROM student_attendances sa
-        JOIN student_enrollments se ON se.id = sa.enrollment_id
-        JOIN class_groups cg ON cg.id = se.class_group_id
-        JOIN grades g ON g.id = cg.grade_id
-        WHERE sa.attendance_date = CURDATE()
-        AND (g.id IN (SELECT grade_id FROM admin_grade_permissions WHERE user_id = ?) 
-        OR cg.id IN (SELECT class_group_id FROM admin_class_permissions WHERE user_id = ?))
-    ");
-    $stmt->execute([currentUserId(), currentUserId()]);
-    $todayTotal = $stmt->fetchColumn();
+    $stmt2 = $pdo->prepare("SELECT COUNT(*) FROM student_attendances sa JOIN student_enrollments se ON se.id = sa.enrollment_id JOIN class_groups cg ON cg.id = se.class_group_id JOIN grades g ON g.id = cg.grade_id WHERE sa.attendance_date = CURDATE() AND (g.id IN (SELECT grade_id FROM admin_grade_permissions WHERE user_id = ?) OR cg.id IN (SELECT class_group_id FROM admin_class_permissions WHERE user_id = ?))");
+    $stmt2->execute([$userId, $userId]); $todayTotal = $stmt2->fetchColumn();
 
-    $stmt = $pdo->prepare("
-        SELECT COUNT(*) FROM student_attendances sa
-        JOIN student_enrollments se ON se.id = sa.enrollment_id
-        JOIN class_groups cg ON cg.id = se.class_group_id
-        JOIN grades g ON g.id = cg.grade_id
-        WHERE sa.attendance_date = CURDATE() AND sa.status = 'terlambat'
-        AND (g.id IN (SELECT grade_id FROM admin_grade_permissions WHERE user_id = ?) 
-        OR cg.id IN (SELECT class_group_id FROM admin_class_permissions WHERE user_id = ?))
-    ");
-    $stmt->execute([currentUserId(), currentUserId()]);
-    $todayLate = $stmt->fetchColumn();
+    $stmt3 = $pdo->prepare("SELECT COUNT(*) FROM student_attendances sa JOIN student_enrollments se ON se.id = sa.enrollment_id JOIN class_groups cg ON cg.id = se.class_group_id JOIN grades g ON g.id = cg.grade_id WHERE sa.attendance_date = CURDATE() AND sa.status = 'terlambat' AND (g.id IN (SELECT grade_id FROM admin_grade_permissions WHERE user_id = ?) OR cg.id IN (SELECT class_group_id FROM admin_class_permissions WHERE user_id = ?))");
+    $stmt3->execute([$userId, $userId]); $todayLate = $stmt3->fetchColumn();
 }
 
 require '../includes/header.php';
@@ -142,61 +144,53 @@ require '../includes/header.php';
 
 <div class="stats-grid">
     <div class="stat-card">
-        <div class="stat-icon stat-icon-student">
-            <i class="fa-solid fa-user-graduate"></i>
-        </div>
+        <div class="stat-icon">👨‍🎓</div>
         <h3><?= number_format($totalStudents) ?></h3>
         <p>Total Siswa</p>
     </div>
-    <?php if ($role === 'super_admin'): ?>
+    <?php if (in_array($role, ['super_admin', 'kepala_sekolah'])): ?>
     <div class="stat-card">
-        <div class="stat-icon stat-icon-staff">
-            <i class="fa-solid fa-chalkboard-user"></i>
-        </div>
+        <div class="stat-icon">👨‍🏫</div>
         <h3><?= number_format($totalStaff) ?></h3>
         <p>Staff / Guru</p>
     </div>
     <?php endif; ?>
     <div class="stat-card">
-        <div class="stat-icon stat-icon-success">
-            <i class="fa-solid fa-clipboard-check"></i>
-        </div>
+        <div class="stat-icon">✓</div>
         <h3><?= number_format($todayTotal) ?></h3>
-        <p>Absensi Hari Ini</p>
+        <p>Absen Siswa Hari Ini</p>
     </div>
     <div class="stat-card">
-        <div class="stat-icon stat-icon-warning">
-            <i class="fa-solid fa-clock-rotate-left"></i>
-        </div>
+        <div class="stat-icon">⚠</div>
         <h3><?= number_format($todayLate) ?></h3>
-        <p>Terlambat Hari Ini</p>
+        <p>Siswa Telat Hari Ini</p>
     </div>
 </div>
 
 <div class="card">
     <div class="card-header">
         <div>
-            <h3 style="display: flex; align-items: center; gap: 8px;">
-                <i class="fa-solid fa-chart-column" style="color: var(--primary);"></i>
-                Statistik Kehadiran
-            </h3>
+            <h3>Statistik Kehadiran</h3>
             <small>Data akurat berdasarkan absensi harian</small>
         </div>
     </div>
     
-    <!-- Filter yang dirubah menjadi Horizontal (Grid) -->
     <form method="GET" style="border-bottom: 1px solid #e2e8f0; padding-bottom: 20px; margin-bottom: 20px;">
         <div class="filter-grid">
+            <?php if (in_array($role, ['super_admin', 'kepala_sekolah'])): ?>
             <div class="form-group">
-                <label><i class="fa-solid fa-users" style="font-size: 12px; color: #64748b; margin-right: 4px;"></i> Tipe Data</label>
+                <label>Tipe Data</label>
                 <select name="chart_type" onchange="this.form.submit()">
                     <option value="student" <?= $chartType === 'student' ? 'selected' : '' ?>>Siswa</option>
                     <option value="staff" <?= $chartType === 'staff' ? 'selected' : '' ?>>Staff / Guru</option>
                 </select>
             </div>
+            <?php else: ?>
+                <input type="hidden" name="chart_type" value="student">
+            <?php endif; ?>
             
             <div class="form-group">
-                <label><i class="fa-solid fa-chart-simple" style="font-size: 12px; color: #64748b; margin-right: 4px;"></i> Tampilan Grafik</label>
+                <label>Tampilan Grafik</label>
                 <select name="filter_mode" onchange="this.form.submit()">
                     <option value="year" <?= $filterMode === 'year' ? 'selected' : '' ?>>Grafik Bulanan (1 Tahun)</option>
                     <option value="month" <?= $filterMode === 'month' ? 'selected' : '' ?>>Grafik Harian (1 Bulan)</option>
@@ -205,7 +199,7 @@ require '../includes/header.php';
 
             <?php if ($filterMode === 'month'): ?>
             <div class="form-group">
-                <label><i class="fa-regular fa-calendar" style="font-size: 12px; color: #64748b; margin-right: 4px;"></i> Pilih Bulan</label>
+                <label>Pilih Bulan</label>
                 <select name="filter_month" onchange="this.form.submit()">
                     <?php 
                     $namaBulan = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
@@ -219,7 +213,7 @@ require '../includes/header.php';
             <?php endif; ?>
 
             <div class="form-group">
-                <label><i class="fa-solid fa-calendar-day" style="font-size: 12px; color: #64748b; margin-right: 4px;"></i> Tahun</label>
+                <label>Tahun</label>
                 <select name="filter_year" onchange="this.form.submit()">
                     <?php for($y = date('Y'); $y >= 2023; $y--): ?>
                         <option value="<?= $y ?>" <?= $filterYear == $y ? 'selected' : '' ?>><?= $y ?></option>
@@ -229,8 +223,8 @@ require '../includes/header.php';
         </div>
     </form>
     
-    <div style="padding: 10px;">
-        <canvas id="attendanceChart" height="100"></canvas>
+    <div style="padding: 10px; position: relative; width: 100%; min-height: 280px; height: 320px;">
+        <canvas id="attendanceChart"></canvas>
     </div>
 </div>
 
@@ -257,14 +251,12 @@ new Chart(ctx, {
     },
     options: {
         responsive: true,
+        maintainAspectRatio: false,
         plugins: { legend: { position: 'bottom' } },
         scales: {
             y: {
                 beginAtZero: true,
-                ticks: {
-                    stepSize: 1, 
-                    precision: 0 
-                }
+                ticks: { stepSize: 1, precision: 0 }
             }
         }
     }
