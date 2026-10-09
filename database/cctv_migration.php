@@ -29,19 +29,13 @@ try {
     CREATE TABLE IF NOT EXISTS `cctv_devices` (
         `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
         `location_id` INT UNSIGNED NOT NULL COMMENT 'Relasi ke cctv_locations (Lantai/Sub-lokasi)',
-        `dvr_server` VARCHAR(100) NULL,
-        `room_name` VARCHAR(150) NULL,
-        `floor_name` VARCHAR(100) NULL,
         `name` VARCHAR(150) NOT NULL,
         `channel_number` INT NULL DEFAULT NULL,
         `sort_order` INT NOT NULL DEFAULT 0,
         `ip_address` VARCHAR(50) NULL DEFAULT NULL,
         `hikconnect_url` VARCHAR(500) NULL DEFAULT NULL,
         `device_serial` VARCHAR(100) NULL DEFAULT NULL,
-        `status` ENUM('normal', 'error', 'maintenance') NOT NULL DEFAULT 'normal',
-        `error_type` VARCHAR(100) NULL,
-        `error_notes` TEXT NULL,
-        `error_date` DATETIME NULL,
+        `status` ENUM('active', 'inactive', 'maintenance') NOT NULL DEFAULT 'active',
         `location_detail` VARCHAR(255) NULL DEFAULT NULL,
         `notes` TEXT NULL DEFAULT NULL,
         `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -54,20 +48,6 @@ try {
     ";
     $pdo->exec($sqlDevices);
     echo "[+] Tabel 'cctv_devices' siap.\n";
-
-    // Tambah kolom ke cctv_devices jika tabel lama sudah ada
-    $colsCheck = [
-        'dvr_server' => "ALTER TABLE `cctv_devices` ADD COLUMN IF NOT EXISTS `dvr_server` VARCHAR(100) NULL AFTER `location_id`",
-        'room_name' => "ALTER TABLE `cctv_devices` ADD COLUMN IF NOT EXISTS `room_name` VARCHAR(150) NULL AFTER `dvr_server`",
-        'floor_name' => "ALTER TABLE `cctv_devices` ADD COLUMN IF NOT EXISTS `floor_name` VARCHAR(100) NULL AFTER `room_name`",
-        'error_type' => "ALTER TABLE `cctv_devices` ADD COLUMN IF NOT EXISTS `error_type` VARCHAR(100) NULL AFTER `ip_address`",
-        'error_notes' => "ALTER TABLE `cctv_devices` ADD COLUMN IF NOT EXISTS `error_notes` TEXT NULL AFTER `error_type`",
-        'error_date' => "ALTER TABLE `cctv_devices` ADD COLUMN IF NOT EXISTS `error_date` DATETIME NULL AFTER `error_notes`",
-    ];
-    foreach ($colsCheck as $col => $sql) {
-        $pdo->exec($sql);
-    }
-    $pdo->exec("ALTER TABLE `cctv_devices` MODIFY COLUMN `status` ENUM('normal', 'error', 'maintenance', 'active', 'inactive') NOT NULL DEFAULT 'normal'");
 
     // 3. Buat tabel cctv_settings (Konfigurasi URL Hik-Connect dsb)
     $sqlSettings = "
@@ -89,7 +69,63 @@ try {
     $stmtSet->execute();
     echo "[+] Setting default 'hikconnect_url' tersimpan.\n";
 
-    // 4. Tambah Menu Baru 'data_cctv' ke app_menus
+    // 4. Seed Template Lokasi Utama & Sub (Lantai) jika masih kosong
+    $locCount = (int)$pdo->query("SELECT COUNT(*) FROM `cctv_locations`")->fetchColumn();
+    if ($locCount === 0) {
+        // Lokasi Utama 1: Gedung Utama
+        $pdo->prepare("INSERT INTO `cctv_locations` (parent_id, name, code, sort_order, description) VALUES (NULL, 'Gedung Utama (SD & SMP)', 'G-UTAMA', 1, 'Gedung utama kegiatan belajar')")->execute();
+        $gUtamaId = (int)$pdo->lastInsertId();
+
+        // Sub Lantai Gedung Utama
+        $pdo->prepare("INSERT INTO `cctv_locations` (parent_id, name, code, sort_order, description) VALUES (?, 'Lantai 1', 'G1-L1', 1, 'Lobby, Ruang Guru, TU, Kelas 1-2')")->execute([$gUtamaId]);
+        $g1l1Id = (int)$pdo->lastInsertId();
+        $pdo->prepare("INSERT INTO `cctv_locations` (parent_id, name, code, sort_order, description) VALUES (?, 'Lantai 2', 'G1-L2', 2, 'Kelas 3-4, Perpustakaan, Lab Komputer')")->execute([$gUtamaId]);
+        $g1l2Id = (int)$pdo->lastInsertId();
+        $pdo->prepare("INSERT INTO `cctv_locations` (parent_id, name, code, sort_order, description) VALUES (?, 'Lantai 3', 'G1-L3', 3, 'Kelas 5-6, Ruang Musik, Musholla')")->execute([$gUtamaId]);
+        $g1l3Id = (int)$pdo->lastInsertId();
+
+        // Lokasi Utama 2: Area Gerbang & Luar
+        $pdo->prepare("INSERT INTO `cctv_locations` (parent_id, name, code, sort_order, description) VALUES (NULL, 'Area Gerbang & Luar', 'G-OUTDOOR', 2, 'Fasilitas luar dan pintu masuk')")->execute();
+        $gOutdoorId = (int)$pdo->lastInsertId();
+
+        // Sub Area Gerbang
+        $pdo->prepare("INSERT INTO `cctv_locations` (parent_id, name, code, sort_order, description) VALUES (?, 'Gerbang Utama & Pos Satpam', 'OUT-POS', 1, 'Akses masuk/keluar utama')")->execute([$gOutdoorId]);
+        $posId = (int)$pdo->lastInsertId();
+        $pdo->prepare("INSERT INTO `cctv_locations` (parent_id, name, code, sort_order, description) VALUES (?, 'Lapangan & Parkiran', 'OUT-PARK', 2, 'Area olahraga dan tempat parkir')")->execute([$gOutdoorId]);
+        $parkId = (int)$pdo->lastInsertId();
+
+        // Seed Sample Kamera CCTV Terurut Rapi
+        $cctvSamples = [
+            // Lantai 1
+            [$g1l1Id, 'CAM 01 - Lobby Masuk Utama', 1, 1, '192.168.1.101', 'active', 'Menghadap gerbang masuk lobby lantai 1'],
+            [$g1l1Id, 'CAM 02 - Koridor Kelas 1 & 2', 2, 2, '192.168.1.102', 'active', 'Lorong kelas lantai 1 sayap timur'],
+            [$g1l1Id, 'CAM 03 - Ruang Guru & Tata Usaha', 3, 3, '192.168.1.103', 'active', 'Akses depan ruang guru dan administrasi'],
+            [$g1l1Id, 'CAM 04 - Tangga Naik Lantai 2', 4, 4, '192.168.1.104', 'active', 'Pangkal tangga utama lantai 1'],
+            // Lantai 2
+            [$g1l2Id, 'CAM 05 - Koridor Kelas 3 & 4', 5, 1, '192.168.1.105', 'active', 'Lorong kelas lantai 2 sayap barat'],
+            [$g1l2Id, 'CAM 06 - Depan Perpustakaan', 6, 2, '192.168.1.106', 'active', 'Akses masuk perpustakaan dan lab'],
+            [$g1l2Id, 'CAM 07 - Tangga Naik Lantai 3', 7, 3, '192.168.1.107', 'active', 'Bordest tangga lantai 2 menuju lantai 3'],
+            // Lantai 3
+            [$g1l3Id, 'CAM 08 - Koridor Kelas 5 & 6', 8, 1, '192.168.1.108', 'active', 'Lorong atas lantai 3'],
+            [$g1l3Id, 'CAM 09 - Area Wudhu & Musholla', 9, 2, '192.168.1.109', 'active', 'Area depan musholla lantai 3'],
+            // Area Gerbang
+            [$posId, 'CAM 10 - Gerbang Masuk Mobil/Motor', 10, 1, '192.168.1.110', 'active', 'Pintu gerbang luar sekolah'],
+            [$posId, 'CAM 11 - Pos Satpam & Drop Zone', 11, 2, '192.168.1.111', 'active', 'Area antar jemput siswa'],
+            [$parkId, 'CAM 12 - Lapangan Utama', 12, 1, '192.168.1.112', 'active', 'Lapangan upacara dan olahraga'],
+        ];
+
+        $stmtDev = $pdo->prepare("
+            INSERT INTO `cctv_devices` 
+            (location_id, name, channel_number, sort_order, ip_address, status, location_detail)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ");
+        foreach ($cctvSamples as $cs) {
+            $stmtDev->execute($cs);
+        }
+        echo "[+] Contoh data CCTV terurut per lantai berhasil di-seed.\n";
+    }
+
+    // 5. Tambah Menu Baru 'data_cctv' ke app_menus
     $stmtCheckMenu = $pdo->prepare("SELECT id FROM app_menus WHERE menu_key = 'data_cctv' LIMIT 1");
     $stmtCheckMenu->execute();
     $existingMenu = $stmtCheckMenu->fetch();
@@ -118,7 +154,7 @@ try {
         echo "[=] Menu 'data_cctv' (id: {$menuId}) diperbarui di app_menus.\n";
     }
 
-    // 5. Beri hak akses ke role 'super_admin'
+    // 6. Beri hak akses ke role 'super_admin'
     $stmtRole = $pdo->query("SELECT id FROM roles WHERE role_key = 'super_admin' LIMIT 1");
     $superAdminRoleId = $stmtRole->fetchColumn();
 

@@ -30,9 +30,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        $stmt = $pdo->prepare("DELETE FROM weekly_schedules WHERE id = ?");
-        $stmt->execute([$id]);
-        flash('success', 'Jadwal pekanan berhasil dihapus.');
+        $stmtOld = $pdo->prepare("SELECT * FROM weekly_schedules WHERE id = ?");
+        $stmtOld->execute([$id]);
+        $oldData = $stmtOld->fetch(PDO::FETCH_ASSOC);
+
+        if ($oldData) {
+            $stmtSt = $pdo->prepare("SELECT student_id FROM weekly_schedule_students WHERE weekly_schedule_id = ?");
+            $stmtSt->execute([$id]);
+            $oldData['student_ids'] = $stmtSt->fetchAll(PDO::FETCH_COLUMN);
+
+            if ($oldData['target_type'] === 'staff') {
+                $stmtStf = $pdo->prepare("SELECT staff_id FROM weekly_schedule_staff WHERE weekly_schedule_id = ?");
+                $stmtStf->execute([$id]);
+                $oldData['staff_ids'] = $stmtStf->fetchAll(PDO::FETCH_COLUMN);
+            }
+
+            recordActivityAudit($pdo, 'jadwal', 'DELETE', 'weekly_schedules', $id, "Hapus Jadwal Pekanan ID #$id", $oldData, null, $oldData['unit_id'] ?? null);
+
+            // Hapus relasi dan data jadwal
+            $pdo->prepare("DELETE FROM weekly_schedule_students WHERE weekly_schedule_id = ?")->execute([$id]);
+            $pdo->prepare("DELETE FROM weekly_schedule_staff WHERE weekly_schedule_id = ?")->execute([$id]);
+            $pdo->prepare("DELETE FROM weekly_schedules WHERE id = ?")->execute([$id]);
+        }
+
+
+        $retTab = 'student';
+        if (!empty($oldData)) {
+            if ($oldData['schedule_type'] === 'eskul') {
+                $retTab = 'eskul';
+            } elseif ($oldData['target_type'] === 'staff') {
+                $retTab = 'staff';
+            }
+        }
+        flash('success', 'Jadwal berhasil dihapus.');
+        header('Location: index.php?tab=' . $retTab);
+        exit;
     }
 }
 

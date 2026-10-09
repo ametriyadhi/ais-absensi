@@ -103,3 +103,10 @@ if (!function_exists('currentRole')) {
         return $_SESSION['role'] ?? null;
     }
 }
+
+if (!function_exists('currentUserName')) {
+    function currentUserName()
+    {
+        return ['name'] ?? ['username'] ?? null;
+    }
+}
