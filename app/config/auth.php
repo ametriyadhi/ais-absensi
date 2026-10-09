@@ -107,6 +107,6 @@ if (!function_exists('currentRole')) {
 if (!function_exists('currentUserName')) {
     function currentUserName()
     {
-        return ['name'] ?? ['username'] ?? null;
+        return $_SESSION['name'] ?? $_SESSION['username'] ?? null;
     }
 }

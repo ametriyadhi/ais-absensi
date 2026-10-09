@@ -72,10 +72,7 @@ INSERT IGNORE INTO `app_menus` (`menu_key`, `menu_name`, `category`, `menu_url`,
 ('access_control',           'Manajemen Akses & User',   'PENGATURAN',  'kelola/index.php',                 'fa-user-cog',         18),
 ('user_activity',            'Aktivitas Pengguna',       'PENGATURAN',  'kelola/activity.php',             'fa-user-clock',       19),
 ('data_cctv',                'Data CCTV',                'PENGATURAN',  'cctv/index.php',                   'fa-video',            20),
-('kelola_wa_dashboard',      'Dashboard WA Gateway',     'PENGATURAN',  'kelola/wa_dashboard.php',          'fa-chart-pie',        21),
-('kelola_audit_logs',        'Audit Log Aktivitas',      'PENGATURAN',  'kelola/audit_logs.php',            'fa-clock-rotate-left',22),
-('kelola_message_templates', 'Template Pesan Unit',      'PENGATURAN',  'kelola/message_templates.php',     'fa-comments',         23),
-('super_kelola_akun',        'Kelola Akun Cadangan',     'PENGATURAN',  'kelola/super/index.php',           'fa-users-gear',       24);
+('activity_logs',            'Log Aktivitas',            'PENGATURAN',  'kelola/audit_logs.php',            'fa-clock-rotate-left',22);
 
 -- -------------------------------------------------------------------------
 -- 3. TABEL: role_menu_access — Hak Akses Menu Default per Role

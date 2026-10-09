@@ -101,7 +101,7 @@ try {
     $appMenuCols = $pdo->query("SHOW TABLES LIKE 'app_menus'")->fetch();
     if ($appMenuCols) {
         $checkMenus = [
-            ['activity_logs', 'Log Aktivitas Data', 'SISTEM', 'kelola/audit_logs.php', 'fa-history', 22],
+            ['activity_logs', 'Log Aktivitas', 'PENGATURAN', 'kelola/audit_logs.php', 'fa-clock-rotate-left', 22],
             ['auto_attendance', 'Atur Absen Otomatis', 'PENGATURAN', 'kelola/auto_attendance.php', 'fa-toggle-off', 23]
         ];
 

@@ -204,6 +204,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['quick_record_
                 ->execute([$stuId, $enrId, $actId ?: 1, $attDate, $timeIn, $newStat, $ket]);
         }
 
+        if (function_exists('recordActivityAudit')) {
+            $actType = $existingId ? 'UPDATE' : 'CREATE';
+            $recId = $existingId ?: (int)$pdo->lastInsertId();
+            recordActivityAudit($pdo, 'attendance_students', $actType, 'student_attendances', $recId, "Aksi Cepat Presensi Siswa ID #{$stuId} ({$newStat}) Tgl {$attDate}", null, ['student_id' => $stuId, 'status' => $newStat, 'date' => $attDate]);
+        }
+
         // Kirim notifikasi WhatsApp Fonnte jika fitur aktif
         if (function_exists('sendStudentWaNotification') && in_array($newStat, ['tepat_waktu', 'terlambat'])) {
             try {
