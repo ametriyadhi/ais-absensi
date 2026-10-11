@@ -852,25 +852,36 @@ if (!function_exists('isAutoAttendanceDisabled')) {
 // =========================================================================
 if (!function_exists('getStudentEffectiveSchedule')) {
     function getStudentEffectiveSchedule(PDO $pdo, int $studentId, int $unitId, string $dateToday, int $dayCode): array {
-        // 1. Ambil jadwal harian reguler dari activities atau weekly_schedules
-        $stmtAct = $pdo->prepare("SELECT * FROM activities WHERE activity_date = ? AND unit_id = ? AND status = 'active' AND is_holiday = 'no' ORDER BY id ASC");
+        // 1. Cek apakah ada Activity Khusus buatan admin (bukan placeholder KBM otomatis)
+        // Aturan: Ketika ada activities khusus, jadwal pekanan tidak dianggap.
+        // Ketika activities kosong/hanya placeholder, maka jadwal pekanan diutamakan.
+        $stmtAct = $pdo->prepare("
+            SELECT * FROM activities 
+            WHERE activity_date = ? AND unit_id = ? AND status = 'active' AND is_holiday = 'no' 
+              AND (target_type = 'student' OR target_type = 'all' OR target_type IS NULL)
+              AND (is_auto_generated = 0 AND name NOT IN ('KBM Reguler', 'Jadwal Reguler Siswa', 'Jadwal Reguler Staff & Guru'))
+            ORDER BY id DESC LIMIT 1
+        ");
         $stmtAct->execute([$dateToday, $unitId]);
-        $activities = $stmtAct->fetchAll(PDO::FETCH_ASSOC);
+        $customActivity = $stmtAct->fetch(PDO::FETCH_ASSOC);
 
         $schedules = [];
 
-        if (!empty($activities)) {
-            foreach ($activities as $act) {
-                $schedules[] = [
-                    'source' => 'activity',
-                    'name' => $act['name'],
-                    'student_in' => $act['student_in'],
-                    'student_late' => $act['student_late'],
-                    'student_out' => $act['student_out']
-                ];
-            }
+        if ($customActivity && !empty($customActivity['student_in']) && $customActivity['student_in'] !== '00:00:00') {
+            // JIKA ADA ACTIVITY KHUSUS: Gunakan Activity, jadwal pekanan tidak dianggap
+            $lateTime = (!empty($customActivity['student_late']) && $customActivity['student_late'] !== '00:00:00')
+                ? $customActivity['student_late']
+                : date('H:i:s', strtotime('+15 minutes', strtotime($customActivity['student_in'])));
+
+            $schedules[] = [
+                'source' => 'activity',
+                'name' => $customActivity['name'],
+                'student_in' => $customActivity['student_in'],
+                'student_late' => $lateTime,
+                'student_out' => $customActivity['student_out']
+            ];
         } else {
-            // Resolusi berjenjang jadwal reguler siswa: Subkelas -> Grade -> Seluruh Unit
+            // JIKA ACTIVITIES KOSONG / HANYA PLACEHOLDER: JADWAL PEKANAN DIUTAMAKAN
             $cgId = 0;
             $gId = 0;
             try {
@@ -914,20 +925,42 @@ if (!function_exists('getStudentEffectiveSchedule')) {
             $weekly = $stmtWeek->fetch(PDO::FETCH_ASSOC);
 
             if (!$weekly) {
-                // Fallback untuk kompatibilitas data lama
+                // Fallback unit umum
                 $stmtFb = $pdo->prepare("SELECT * FROM weekly_schedules WHERE unit_id = ? AND day_code = ? AND (schedule_type = 'reguler' OR schedule_type IS NULL) AND is_active = 'active' ORDER BY id DESC LIMIT 1");
                 $stmtFb->execute([$unitId, $dayCode]);
                 $weekly = $stmtFb->fetch(PDO::FETCH_ASSOC);
             }
 
-            if ($weekly) {
+            if ($weekly && !empty($weekly['student_in']) && $weekly['student_in'] !== '00:00:00') {
+                $lateTime = (!empty($weekly['student_late']) && $weekly['student_late'] !== '00:00:00')
+                    ? $weekly['student_late']
+                    : date('H:i:s', strtotime('+15 minutes', strtotime($weekly['student_in'])));
+
                 $schedules[] = [
                     'source' => 'reguler',
                     'name' => $weekly['name'] ?: 'KBM Reguler',
                     'student_in' => $weekly['student_in'],
-                    'student_late' => $weekly['student_late'],
+                    'student_late' => $lateTime,
                     'student_out' => $weekly['student_out']
                 ];
+            } else {
+                // Fallback terakhir jika weekly belum diatur sama sekali tapi ada data activities
+                $stmtFallbackAct = $pdo->prepare("SELECT * FROM activities WHERE activity_date = ? AND unit_id = ? AND status = 'active' AND is_holiday = 'no' ORDER BY id DESC LIMIT 1");
+                $stmtFallbackAct->execute([$dateToday, $unitId]);
+                $fbAct = $stmtFallbackAct->fetch(PDO::FETCH_ASSOC);
+                if ($fbAct && !empty($fbAct['student_in']) && $fbAct['student_in'] !== '00:00:00') {
+                    $lateTime = (!empty($fbAct['student_late']) && $fbAct['student_late'] !== '00:00:00')
+                        ? $fbAct['student_late']
+                        : date('H:i:s', strtotime('+15 minutes', strtotime($fbAct['student_in'])));
+
+                    $schedules[] = [
+                        'source' => 'activity_fallback',
+                        'name' => $fbAct['name'],
+                        'student_in' => $fbAct['student_in'],
+                        'student_late' => $lateTime,
+                        'student_out' => $fbAct['student_out']
+                    ];
+                }
             }
         }
 
@@ -944,11 +977,15 @@ if (!function_exists('getStudentEffectiveSchedule')) {
         $eskulNames = [];
         foreach ($eskuls as $esk) {
             $eskulNames[] = $esk['name'];
+            $eskLate = (!empty($esk['student_late']) && $esk['student_late'] !== '00:00:00')
+                ? $esk['student_late']
+                : date('H:i:s', strtotime('+15 minutes', strtotime($esk['student_in'])));
+
             $schedules[] = [
                 'source' => 'eskul',
                 'name' => $esk['name'],
                 'student_in' => $esk['student_in'],
-                'student_late' => $esk['student_late'],
+                'student_late' => $eskLate,
                 'student_out' => $esk['student_out']
             ];
         }
@@ -971,14 +1008,17 @@ if (!function_exists('getStudentEffectiveSchedule')) {
         $latestScheduleName = '';
 
         foreach ($schedules as $s) {
-            if (!empty($s['student_in'])) {
+            if (!empty($s['student_in']) && $s['student_in'] !== '00:00:00') {
                 if ($earliestIn === null || $s['student_in'] < $earliestIn) {
                     $earliestIn = $s['student_in'];
-                    $lateForEarliest = $s['student_late'] ?? $s['student_in'];
+                    $late = (!empty($s['student_late']) && $s['student_late'] !== '00:00:00') 
+                        ? $s['student_late'] 
+                        : date('H:i:s', strtotime('+15 minutes', strtotime($earliestIn)));
+                    $lateForEarliest = $late;
                     $earliestScheduleName = $s['name'];
                 }
             }
-            if (!empty($s['student_out'])) {
+            if (!empty($s['student_out']) && $s['student_out'] !== '00:00:00') {
                 if ($latestOut === null || $s['student_out'] > $latestOut) {
                     $latestOut = $s['student_out'];
                     $latestScheduleName = $s['name'];
@@ -991,6 +1031,7 @@ if (!function_exists('getStudentEffectiveSchedule')) {
             'student_in' => $earliestIn,
             'student_late' => $lateForEarliest,
             'student_out' => $latestOut,
+            'schedule_name' => $earliestScheduleName,
             'earliest_schedule_name' => $earliestScheduleName,
             'latest_schedule_name' => $latestScheduleName,
             'has_eskul' => !empty($eskulNames),
@@ -1214,83 +1255,190 @@ if (!function_exists('getStaffShiftSchedule')) {
 
 if (!function_exists('getDailyActivity')) {
     function getDailyActivity(PDO $pdo, int $unitId, string $dateToday, int $dayCode, string $targetType = 'student'): ?array {
+        // 1. Cek apakah ada Activity Khusus buatan admin (bukan placeholder KBM otomatis)
+        // Aturan: Ketika ada activities khusus, jadwal pekanan tidak dianggap.
         $stmt = $pdo->prepare("
             SELECT * FROM activities 
             WHERE activity_date = ? AND unit_id = ? 
               AND (target_type = ? OR target_type = 'all' OR target_type IS NULL) 
-            ORDER BY (target_type = ?) DESC, id ASC 
+              AND status = 'active' AND is_holiday = 'no'
+              AND (is_auto_generated = 0 AND name NOT IN ('KBM Reguler', 'Jadwal Reguler Siswa', 'Jadwal Reguler Staff & Guru'))
+            ORDER BY id DESC 
             LIMIT 1
         ");
-        $stmt->execute([$dateToday, $unitId, $targetType, $targetType]);
-        $activity = $stmt->fetch(PDO::FETCH_ASSOC);
+        $stmt->execute([$dateToday, $unitId, $targetType]);
+        $customActivity = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        if (!$activity) {
-            $stmtWeek = $pdo->prepare("
+        if ($customActivity) {
+            return $customActivity;
+        }
+
+        // 2. Jika activities khusus kosong, maka JADWAL PEKANAN diutamakan
+        $stmtWeek = $pdo->prepare("
+            SELECT * FROM weekly_schedules 
+            WHERE day_code = ? AND unit_id = ? AND is_active = 'active' 
+              AND (target_type = ? OR target_type IS NULL) 
+              AND (schedule_type = 'reguler' OR schedule_type IS NULL) 
+            ORDER BY (grade_id IS NULL AND class_group_id IS NULL) DESC, id ASC 
+            LIMIT 1
+        ");
+        $stmtWeek->execute([$dayCode, $unitId, $targetType]);
+        $weekly = $stmtWeek->fetch(PDO::FETCH_ASSOC);
+
+        // Fallback 1: Jika staff tapi belum ada target_type = 'staff', cari jadwal legacy dengan staff_in valid
+        if (!$weekly && $targetType === 'staff') {
+            $stmtFallback = $pdo->prepare("
                 SELECT * FROM weekly_schedules 
                 WHERE day_code = ? AND unit_id = ? AND is_active = 'active' 
-                  AND (target_type = ? OR target_type IS NULL) 
-                  AND (schedule_type = 'reguler' OR schedule_type IS NULL) 
-                ORDER BY (grade_id IS NULL AND class_group_id IS NULL) DESC, id ASC 
-                LIMIT 1
+                  AND (staff_in IS NOT NULL AND staff_in != '00:00:00')
+                ORDER BY id ASC LIMIT 1
             ");
-            $stmtWeek->execute([$dayCode, $unitId, $targetType]);
-            $weekly = $stmtWeek->fetch(PDO::FETCH_ASSOC);
-            
-            // Fallback 1: Jika staff tapi belum ada target_type = 'staff', cari jadwal legacy dengan staff_in valid
-            if (!$weekly && $targetType === 'staff') {
-                $stmtFallback = $pdo->prepare("
-                    SELECT * FROM weekly_schedules 
-                    WHERE day_code = ? AND unit_id = ? AND is_active = 'active' 
-                      AND (staff_in IS NOT NULL AND staff_in != '00:00:00')
-                    ORDER BY id ASC LIMIT 1
-                ");
-                $stmtFallback->execute([$dayCode, $unitId]);
-                $weekly = $stmtFallback->fetch(PDO::FETCH_ASSOC);
-            }
+            $stmtFallback->execute([$dayCode, $unitId]);
+            $weekly = $stmtFallback->fetch(PDO::FETCH_ASSOC);
+        }
 
-            // Fallback 2: Jika masih kosong untuk staff, ambil template hari lain di unit yang sama atau default jam kerja
-            if (!$weekly && $targetType === 'staff') {
-                $stmtAny = $pdo->prepare("
-                    SELECT * FROM weekly_schedules 
-                    WHERE unit_id = ? AND is_active = 'active' 
-                      AND (target_type = 'staff' OR (staff_in IS NOT NULL AND staff_in != '00:00:00'))
-                    ORDER BY id ASC LIMIT 1
-                ");
-                $stmtAny->execute([$unitId]);
-                $anyStaff = $stmtAny->fetch(PDO::FETCH_ASSOC);
+        $studentIn = $weekly['student_in'] ?? '06:30:00';
+        $studentLate = (!empty($weekly['student_late']) && $weekly['student_late'] !== '00:00:00') 
+            ? $weekly['student_late'] 
+            : date('H:i:s', strtotime('+15 minutes', strtotime($studentIn)));
+        $studentOut = $weekly['student_out'] ?? '15:30:00';
 
-                $weekly = [
-                    'student_in'   => '00:00:00',
-                    'student_late' => '00:00:00',
-                    'student_out'  => '00:00:00',
-                    'staff_in'     => $anyStaff['staff_in'] ?? '06:45:00',
-                    'staff_late'   => $anyStaff['staff_late'] ?? '07:00:00',
-                    'staff_out'    => $anyStaff['staff_out'] ?? '15:30:00',
-                    'name'         => 'Jadwal Reguler Staff'
-                ];
-            }
+        $staffIn = $weekly['staff_in'] ?? '06:45:00';
+        $staffLate = (!empty($weekly['staff_late']) && $weekly['staff_late'] !== '00:00:00') 
+            ? $weekly['staff_late'] 
+            : '07:00:00';
+        $staffOut = $weekly['staff_out'] ?? '15:30:00';
 
-            if ($weekly) {
-                $stmtAy = $pdo->query("SELECT id FROM academic_years WHERE status = 'active' LIMIT 1");
-                $ay = $stmtAy->fetch(PDO::FETCH_ASSOC);
-                $ayId = $ay ? $ay['id'] : 1;
+        // Pastikan placeholder di tabel activities ada & aktif untuk foreign key activity_id
+        $stmtExist = $pdo->prepare("
+            SELECT * FROM activities 
+            WHERE activity_date = ? AND unit_id = ? 
+              AND (target_type = ? OR target_type = 'all' OR target_type IS NULL)
+            ORDER BY id DESC LIMIT 1
+        ");
+        $stmtExist->execute([$dateToday, $unitId, $targetType]);
+        $activity = $stmtExist->fetch(PDO::FETCH_ASSOC);
 
-                $actName = ($targetType === 'staff') ? "Jadwal Reguler Staff & Guru" : "Jadwal Reguler Siswa";
+        if (!$activity) {
+            $stmtAy = $pdo->query("SELECT id FROM academic_years WHERE status = 'active' LIMIT 1");
+            $ay = $stmtAy->fetch(PDO::FETCH_ASSOC);
+            $ayId = (int)($ay ? $ay['id'] : 1);
+            $actName = ($targetType === 'staff') ? "Jadwal Reguler Staff & Guru" : "KBM Reguler";
 
-                $insertAct = $pdo->prepare("
-                    INSERT INTO activities 
-                    (academic_year_id, unit_id, target_type, name, activity_date, student_in, student_late, student_out, staff_in, staff_late, staff_out, status) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
-                ");
-                $insertAct->execute([
-                    $ayId, $unitId, $targetType, $actName, $dateToday, 
-                    $weekly['student_in'] ?? '00:00:00', $weekly['student_late'] ?? '00:00:00', $weekly['student_out'] ?? '00:00:00', 
-                    $weekly['staff_in'] ?? '06:45:00', $weekly['staff_late'] ?? '07:00:00', $weekly['staff_out'] ?? '15:30:00'
-                ]);
-                $stmt->execute([$dateToday, $unitId, $targetType, $targetType]);
-                $activity = $stmt->fetch(PDO::FETCH_ASSOC);
+            $insertAct = $pdo->prepare("
+                INSERT INTO activities 
+                (academic_year_id, unit_id, target_type, name, activity_date, student_in, student_late, student_out, staff_in, staff_late, staff_out, status, is_auto_generated) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 1)
+            ");
+            $insertAct->execute([
+                $ayId, $unitId, $targetType, $actName, $dateToday, 
+                $studentIn, $studentLate, $studentOut, 
+                $staffIn, $staffLate, $staffOut
+            ]);
+            $stmtExist->execute([$dateToday, $unitId, $targetType]);
+            $activity = $stmtExist->fetch(PDO::FETCH_ASSOC);
+        } else {
+            // Jika placeholder ada tapi closed atau jamnya berbeda dengan weekly_schedules, aktifkan & sinkronkan
+            if ($activity['status'] !== 'active' || $activity['is_auto_generated'] == 1) {
+                $pdo->prepare("
+                    UPDATE activities 
+                    SET status = 'active', student_in = ?, student_late = ?, student_out = ?, is_auto_generated = 1 
+                    WHERE id = ?
+                ")->execute([$studentIn, $studentLate, $studentOut, $activity['id']]);
+                $activity['status'] = 'active';
+                $activity['student_in'] = $studentIn;
+                $activity['student_late'] = $studentLate;
+                $activity['student_out'] = $studentOut;
             }
         }
+
         return $activity ?: null;
+    }
+}
+
+if (!function_exists('getAttendanceUnitSettings')) {
+    function getAttendanceUnitSettings(PDO $pdo, int $unitId): array {
+        static $cache = [];
+        $unitId = (int)$unitId;
+        if (isset($cache[$unitId])) {
+            return $cache[$unitId];
+        }
+
+        $default = [
+            'unit_id' => $unitId,
+            'early_departure_mode' => 'offset_minutes',
+            'early_departure_minutes' => 0, // 0 = tepat jam kepulangan
+            'early_departure_time' => null,
+            'auto_attendance_mode' => 'offset_minutes',
+            'auto_attendance_minutes' => 180, // default 180 menit (3 jam) setelah jam masuk
+            'auto_attendance_time' => null,
+            'checkout_window_hours' => 4.0, // default 4 jam setelah jam kepulangan
+            'checkout_max_delay_minutes' => 60, // default 60 menit setelah jam kepulangan
+        ];
+
+        if ($unitId <= 0) {
+            $cache[$unitId] = $default;
+            return $default;
+        }
+
+        try {
+            $stmt = $pdo->prepare("SELECT * FROM attendance_unit_settings WHERE unit_id = ? LIMIT 1");
+            $stmt->execute([$unitId]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            if ($row) {
+                $cache[$unitId] = array_merge($default, $row);
+                return $cache[$unitId];
+            }
+        } catch (Throwable $e) {}
+
+        $cache[$unitId] = $default;
+        return $default;
+    }
+}
+
+if (!function_exists('getAttendanceSessionLimits')) {
+    function getAttendanceSessionLimits(PDO $pdo, int $unitId, string $dateToday, string $studentInTime, string $studentOutTime): array {
+        $settings = getAttendanceUnitSettings($pdo, $unitId);
+        $jamMasukDetik = strtotime($studentInTime);
+        $jamPulangDetik = strtotime($studentOutTime);
+
+        // 1. Tutup Masuk / Mulai Auto-Alpha
+        if ($settings['auto_attendance_mode'] === 'fixed_time' && !empty($settings['auto_attendance_time'])) {
+            $tutupMasuk = strtotime($dateToday . ' ' . $settings['auto_attendance_time']);
+        } else {
+            $mins = (int)($settings['auto_attendance_minutes'] ?? 180);
+            if ($mins <= 0) $mins = 180;
+            $tutupMasuk = strtotime("+{$mins} minutes", $jamMasukDetik);
+        }
+
+        // 2. Batas Pulang Cepat
+        if ($settings['early_departure_mode'] === 'fixed_time' && !empty($settings['early_departure_time'])) {
+            $batasPulangCepat = strtotime($dateToday . ' ' . $settings['early_departure_time']);
+        } else {
+            $earlyMins = (int)($settings['early_departure_minutes'] ?? 0);
+            $batasPulangCepat = strtotime("-{$earlyMins} minutes", $jamPulangDetik);
+        }
+
+        // 3. Batas Akses Kepulangan (Tutup Pulang)
+        $windowHours = (float)($settings['checkout_window_hours'] ?? 4.0);
+        if ($windowHours <= 0) $windowHours = 4.0;
+        $tutupPulang = strtotime("+" . round($windowHours * 3600) . " seconds", $jamPulangDetik);
+
+        // 4. Batas Pulang Terlalu Lama
+        $maxDelayMins = (int)($settings['checkout_max_delay_minutes'] ?? 60);
+        if ($maxDelayMins <= 0) $maxDelayMins = 60;
+        $batasTerlaluLamaDetik = $maxDelayMins * 60;
+
+        return [
+            'settings' => $settings,
+            'jamMasukDetik' => $jamMasukDetik,
+            'jamPulangDetik' => $jamPulangDetik,
+            'bukaMasuk' => strtotime('-2 hours', $jamMasukDetik),
+            'tutupMasuk' => $tutupMasuk,
+            'bukaPulang' => $tutupMasuk,
+            'batasPulangCepat' => $batasPulangCepat,
+            'tutupPulang' => $tutupPulang,
+            'batasTerlaluLamaDetik' => $batasTerlaluLamaDetik
+        ];
     }
 }
