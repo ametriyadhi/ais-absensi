@@ -57,7 +57,11 @@ if (empty($_SESSION['user_id']) && isset($_COOKIE['ais_remember'])) {
 
 // JIKA SUDAH LOGIN, LANGSUNG KE DASHBOARD
 if (!empty($_SESSION['user_id'])) {
-    header('Location: dashboard.php');
+    if (($_SESSION['role'] ?? '') === 'siswa') {
+        header('Location: student/dashboard.php');
+    } else {
+        header('Location: dashboard.php');
+    }
     exit;
 }
 
@@ -75,7 +79,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'Username dan password wajib diisi.';
     } else {
         $stmt = $pdo->prepare("
-            SELECT id, username, password, name, role
+            SELECT id, username, password, name, role, student_id
             FROM users
             WHERE username = ? AND deleted_at IS NULL
             LIMIT 1
@@ -91,6 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['username'] = $user['username'];
             $_SESSION['name'] = $user['name'];
             $_SESSION['role'] = $user['role'];
+            $_SESSION['student_id'] = $user['student_id'] ?? null;
 
             // Load daftar menu yang diizinkan ke dalam session (ACL Dinamis)
             loadUserPermissions($pdo, (int)$user['id']);
@@ -101,6 +106,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             if (function_exists('recordActivityAudit')) {
                 recordActivityAudit($pdo, 'auth', 'LOGIN', 'users', (int)$user['id'], "Login ke sistem: {$user['name']} ({$user['username']}) - Role: {$user['role']}");
+            }
+
+            // Jika role siswa, catat log forensik (Model HP & IP)
+            if ($user['role'] === 'siswa' && !empty($user['student_id'])) {
+                if (function_exists('logStudentActivity')) {
+                    logStudentActivity($pdo, (int)$user['student_id'], (int)$user['id'], 'login', 'Siswa berhasil login ke portal siswa');
+                }
             }
 
             // Jika user mencentang "Ingat Saya"
@@ -116,10 +128,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 setcookie('ais_remember', '', time() - 3600, "/");
             }
 
-            header('Location: dashboard.php');
+            if ($user['role'] === 'siswa') {
+                header('Location: student/dashboard.php');
+            } else {
+                header('Location: dashboard.php');
+            }
             exit;
         } else {
-            $error = 'Username atau password salah.';
+            if ($user && $user['role'] === 'siswa' && !empty($user['student_id'])) {
+                if (function_exists('logStudentActivity')) {
+                    logStudentActivity($pdo, (int)$user['student_id'], (int)$user['id'], 'failed_login', 'Gagal login (password salah)');
+                }
+            }
+            $error = 'Username/NIS atau password salah.';
         }
     }
 }

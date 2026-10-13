@@ -16,6 +16,12 @@
 !/app/uploads/students/
 /app/uploads/students/*
 !/app/uploads/students/.gitkeep
+!/app/uploads/permits/
+/app/uploads/permits/*
+!/app/uploads/permits/.gitkeep
+!/app/uploads/achievements/
+/app/uploads/achievements/*
+!/app/uploads/achievements/.gitkeep
 
 # Compressed archives & backups
 *.zip

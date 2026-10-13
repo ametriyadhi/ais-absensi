@@ -41,7 +41,7 @@ if (!defined('UPLOAD_ADMIN')) {
 $uploadStudentPath = UPLOAD_STUDENT;
 
 // Pastikan folder upload selalu ada dan memiliki izin tulis
-foreach ([UPLOAD_PATH, UPLOAD_STUDENT, UPLOAD_PATH . '/staff/', UPLOAD_PATH . '/admins/'] as $dir) {
+foreach ([UPLOAD_PATH, UPLOAD_STUDENT, UPLOAD_PATH . '/staff/', UPLOAD_PATH . '/admins/', UPLOAD_PATH . '/permits/', UPLOAD_PATH . '/achievements/'] as $dir) {
     if (!is_dir($dir)) {
         @mkdir($dir, 0777, true);
     }
@@ -49,6 +49,9 @@ foreach ([UPLOAD_PATH, UPLOAD_STUDENT, UPLOAD_PATH . '/staff/', UPLOAD_PATH . '/
 }
 
 date_default_timezone_set('Asia/Jakarta');
+
+// Forensic & Device Detector Helper
+require_once __DIR__ . '/../includes/device_detector.php';
 
 // Konfigurasi Geofencing Lokasi Sekolah (Default: An-Nahl Islamic School)
 if (!defined('SCHOOL_NAME')) {

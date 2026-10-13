@@ -19,7 +19,7 @@ function verifyPassword($password, $hash)
     }
 
     // Modern password hash (bcrypt / argon2)
-    if (str_starts_with($hash, '$2y$') || str_starts_with($hash, '$2a$') || str_starts_with($hash, '$argon2')) {
+    if (str_starts_with($hash, '$2y$') || str_starts_with($hash, '$2a$') || str_starts_with($hash, '$2b$') || str_starts_with($hash, '$argon2')) {
         return password_verify($password, $hash);
     }
 
