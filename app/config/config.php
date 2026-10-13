@@ -40,6 +40,14 @@ if (!defined('UPLOAD_ADMIN')) {
 
 $uploadStudentPath = UPLOAD_STUDENT;
 
+// Pastikan folder upload selalu ada dan memiliki izin tulis
+foreach ([UPLOAD_PATH, UPLOAD_STUDENT, UPLOAD_PATH . '/staff/', UPLOAD_PATH . '/admins/'] as $dir) {
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0777, true);
+    }
+    @chmod($dir, 0777);
+}
+
 date_default_timezone_set('Asia/Jakarta');
 
 // Konfigurasi Geofencing Lokasi Sekolah (Default: An-Nahl Islamic School)
