@@ -187,15 +187,14 @@ if ($userRole === 'siswa') {
         }
     };
 
-    // Auto-sync Historical Rekap & Adab Store from MariaDB
-    document.addEventListener('DOMContentLoaded', function() {
-        // Load Rekap Data
+    // Auto-sync Historical Rekap, Bank Materi & Adab Store directly from MariaDB API
+    function fetchAllInitialDataFromDatabase() {
+        // 1. Load Rekap Data (413 records)
         fetch('api.php?action=getRekapData')
             .then(r => r.json())
             .then(res => {
                 if (res && res.success && res.data && res.data.length > 0) {
                     console.log('Loaded historical rekap data from DB:', res.data.length);
-                    // Langsung gantikan / integrasikan ke MENTORING_REKAP_DATA
                     MENTORING_REKAP_DATA = res.data;
                     try { localStorage.setItem('MIP_REKAP_STORE', JSON.stringify(MENTORING_REKAP_DATA)); } catch(e){}
                     if (typeof renderRekapMatrixTable === 'function') renderRekapMatrixTable();
@@ -203,18 +202,7 @@ if ($userRole === 'siswa') {
                 }
             }).catch(e => console.warn('Could not load rekap data:', e));
 
-        // Load Adab Data
-        fetch('api.php?action=getAdabData')
-            .then(r => r.json())
-            .then(res => {
-                if (res && res.success && res.data) {
-                    console.log('Loaded historical adab data from DB:', Object.keys(res.data).length);
-                    Object.assign(SISWA_ADAB_STORE, res.data);
-                    try { localStorage.setItem('MIP_SISWA_ADAB_STORE', JSON.stringify(SISWA_ADAB_STORE)); } catch(e){}
-                }
-            }).catch(e => console.warn('Could not load adab data:', e));
-
-        // Load Bank Materi
+        // 2. Load Bank Materi (35 modules)
         fetch('api.php?action=getBankMateri')
             .then(r => r.json())
             .then(res => {
@@ -225,7 +213,22 @@ if ($userRole === 'siswa') {
                     if (typeof renderBankMateriCards === 'function') renderBankMateriCards();
                 }
             }).catch(e => console.warn('Could not load bank materi:', e));
-    });
+
+        // 3. Load Adab Data (2.817 logs)
+        fetch('api.php?action=getAdabData')
+            .then(r => r.json())
+            .then(res => {
+                if (res && res.success && res.data) {
+                    console.log('Loaded historical adab data from DB:', Object.keys(res.data).length);
+                    Object.assign(SISWA_ADAB_STORE, res.data);
+                    try { localStorage.setItem('MIP_SISWA_ADAB_STORE', JSON.stringify(SISWA_ADAB_STORE)); } catch(e){}
+                }
+            }).catch(e => console.warn('Could not load adab data:', e));
+    }
+
+    document.addEventListener('DOMContentLoaded', fetchAllInitialDataFromDatabase);
+    // Jalankan ulang setelah 800ms untuk memastikan seluruh listener SPA selesai inisialisasi
+    window.addEventListener('load', () => setTimeout(fetchAllInitialDataFromDatabase, 800));
     </script>
 
 </head>
@@ -1999,7 +2002,8 @@ if ($userRole === 'siswa') {
 
             selectEl.innerHTML = '<option value="manual">-- Input Manual / Kustom Materi Adab --</option>';
             BANK_MATERI_DATA.forEach(m => {
-                selectEl.innerHTML += `<option value="${m.id}">${escapeHtml(m.judul)} (Kelas ${m.kelas} - ${m.pekan})</option>`;
+                const kText = (m.kelas || '').toString().toLowerCase().includes('kelas') ? m.kelas : `Kelas ${m.kelas}`;
+                selectEl.innerHTML += `<option value="${m.id}">${escapeHtml(m.judul)} (${escapeHtml(kText)} - ${escapeHtml(m.pekan)})</option>`;
             });
 
             if (currentVal) selectEl.value = currentVal;
