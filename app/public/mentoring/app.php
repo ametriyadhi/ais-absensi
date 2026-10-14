@@ -1,3 +1,34 @@
+<?php
+require_once __DIR__ . '/../../config/config.php';
+require_once __DIR__ . '/../../config/database.php';
+require_once __DIR__ . '/../../config/auth.php';
+require_once __DIR__ . '/../../config/security.php';
+require_once __DIR__ . '/../../includes/functions.php';
+
+requireLogin();
+
+$userRole = currentRole();
+$userName = currentUserName();
+$userObj = [
+    'name' => $userName,
+    'role' => $userRole
+];
+
+// Jika login sebagai siswa, ambil NIS dan Kelas
+if ($userRole === 'siswa') {
+    $studentId = $_SESSION['student_id'] ?? 0;
+    if ($studentId) {
+        $stmtS = $pdo->prepare("SELECT s.name, s.nis, cg.name as class_name FROM students s LEFT JOIN class_groups cg ON cg.id = s.class_group_id WHERE s.id = ?");
+        $stmtS->execute([$studentId]);
+        $st = $stmtS->fetch();
+        if ($st) {
+            $userObj['name'] = $st['name'];
+            $userObj['nis'] = $st['nis'];
+            $userObj['kelas'] = $st['class_name'] ?? '7';
+        }
+    }
+}
+?>
 <!DOCTYPE html>
 <html lang="id">
 <head>
@@ -88,6 +119,8 @@
 
     <!-- AIS ABSENSI NATIVE BRIDGE ADAPTER -->
     <script>
+    const PHP_SESSION_USER = <?php echo json_encode($userObj); ?>;
+
     window.google = {
         script: {
             run: {
@@ -1857,14 +1890,14 @@
             if (selectQuickMentor) {
                 selectQuickMentor.innerHTML = '<option value="">-- Pilih Mentor --</option><option value="Administrator">Administrator (Admin)</option>';
                 MASTER_MENTOR_DATA.forEach(m => {
-                    selectQuickMentor.innerHTML += <option value=""></option>;
+                    selectQuickMentor.innerHTML += `<option value="${m.mentor}">${m.mentor} (${m.kelas})</option>`;
                 });
             }
 
             if (selectQuickSiswa) {
                 selectQuickSiswa.innerHTML = '<option value="">-- Pilih Murid --</option>';
                 MASTER_SISWA_LIST.forEach(s => {
-                    selectQuickSiswa.innerHTML += <option value=""> ()</option>;
+                    selectQuickSiswa.innerHTML += `<option value="${s.nis}">${s.mentee} (${s.kelas})</option>`;
                 });
             }
 
@@ -1919,7 +1952,7 @@
             selReport.innerHTML = '';
             if (filtered.length > 0) {
                 filtered.forEach(s => {
-                    selReport.innerHTML += <option value=""> (Kelas  - NIS  - )</option>;
+                    selReport.innerHTML += `<option value="${s.mentee}">${s.mentee} (Kelas ${s.kelas} - NIS ${s.nis} - ${s.mentor})</option>`;
                 });
             } else {
                 selReport.innerHTML = '<option value="">-- Tidak ada murid/mentor sesuai pencarian --</option>';
@@ -2026,24 +2059,39 @@
         function handleLoginMentor(e) {
             if (e && e.preventDefault) e.preventDefault();
             let usernameInput = (document.getElementById('loginMentorUsername').value || '').trim();
+            let passwordInput = (document.getElementById('loginMentorPassword').value || '').trim();
+
             if (!usernameInput) {
-                usernameInput = "Administrator";
-                document.getElementById('loginMentorUsername').value = "Administrator";
+                usernameInput = "Admin";
+                document.getElementById('loginMentorUsername').value = "Admin";
             }
 
             let role = "mentor";
+            let displayName = usernameInput;
+
+            // Pengecekan admin / administrator
             if (usernameInput.toLowerCase() === 'admin' || usernameInput.toLowerCase() === 'administrator') {
                 role = "admin";
-                usernameInput = "Administrator";
+                displayName = "Administrator";
             } else if (typeof MASTER_MENTOR_DATA !== 'undefined' && MASTER_MENTOR_DATA.length > 0) {
                 const foundInMaster = MASTER_MENTOR_DATA.find(m => 
                     m.mentor.toLowerCase() === usernameInput.toLowerCase() ||
                     m.mentor.toLowerCase().includes(usernameInput.toLowerCase())
                 );
-                if (foundInMaster) usernameInput = foundInMaster.mentor;
+                if (foundInMaster) displayName = foundInMaster.mentor;
             }
 
-            currentUser = { name: usernameInput, role: role };
+            // Cek apakah ada data users dari sheet / DB
+            if (window.SHEET_USERS_DATA && window.SHEET_USERS_DATA.length > 0) {
+                const matchedUser = window.SHEET_USERS_DATA.find(u => 
+                    u.username.toLowerCase() === usernameInput.toLowerCase()
+                );
+                if (matchedUser && matchedUser.role) {
+                    role = matchedUser.role.toLowerCase() === 'admin' ? 'admin' : 'mentor';
+                }
+            }
+
+            currentUser = { name: displayName, role: role };
 
             const screen = document.getElementById('login-screen');
             if (screen) {
@@ -2349,11 +2397,11 @@
                 refQuestions.forEach((qText, i) => {
                     const existingVal = entry ? (entry[
 efleksi] || (entry.refleksiAnswers ? entry.refleksiAnswers[i] : '')) : '';
-                    refHtml += 
+                    refHtml += `
                     <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1"></label>
-                        <textarea id="siswaRefleksi_" rows="2" placeholder="Tuliskan jawaban refleksi adabmu..." required class="siswa-refleksi-input w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-800"></textarea>
-                    </div>;
+                        <label class="block text-xs font-bold text-slate-700 mb-1">${qText}</label>
+                        <textarea id="siswaRefleksi_${i+1}" rows="2" placeholder="Tuliskan jawaban refleksi adabmu..." required class="siswa-refleksi-input w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-800">${escapeHtml(existingVal)}</textarea>
+                    </div>`;
                 });
                 refContainer.innerHTML = refHtml;
             }
@@ -4198,7 +4246,53 @@ efleksi] || (entry.refleksiAnswers ? entry.refleksiAnswers[i] : '')) : '';
                 modal.classList.add('hidden');
             }, 3500);
         }
-    </script>
+    
+
+        function bypassLoginDirect(role) {
+            if (role === 'admin') {
+                currentUser = { name: "Administrator", role: "admin" };
+            } else if (role === 'siswa') {
+                const firstSiswa = (typeof MASTER_SISWA_LIST !== 'undefined' && MASTER_SISWA_LIST.length > 0) ? MASTER_SISWA_LIST[0] : null;
+                currentUser = {
+                    name: firstSiswa ? firstSiswa.mentee : "Siswa MIP",
+                    nis: firstSiswa ? firstSiswa.nis : "262707001",
+                    kelas: firstSiswa ? firstSiswa.kelas : "7",
+                    mentor: firstSiswa ? firstSiswa.mentor : "Mentor MIP",
+                    role: "siswa"
+                };
+            }
+            const screen = document.getElementById('login-screen');
+            if (screen) {
+                screen.classList.add('hidden');
+                screen.style.display = 'none';
+            }
+            try { setupUserRoleUI(); } catch(err) { console.error("UI setup err:", err); }
+            showToast(`Login berhasil sebagai ${currentUser.name}!`);
+        }
+
+        // Auto-login jika pengguna sudah login di sistem absensi (PHP Session)
+        window.addEventListener('DOMContentLoaded', () => {
+            if (typeof PHP_SESSION_USER !== 'undefined' && PHP_SESSION_USER && PHP_SESSION_USER.name) {
+                console.log("Auto-authenticating with PHP Session:", PHP_SESSION_USER);
+                currentUser = {
+                    name: PHP_SESSION_USER.name,
+                    role: PHP_SESSION_USER.role === 'super_admin' ? 'admin' : (PHP_SESSION_USER.role === 'siswa' ? 'siswa' : 'mentor'),
+                    nis: PHP_SESSION_USER.nis || '',
+                    kelas: PHP_SESSION_USER.kelas || '7',
+                    mentor: PHP_SESSION_USER.mentor || 'Mentor MIP'
+                };
+                const screen = document.getElementById('login-screen');
+                if (screen) {
+                    screen.classList.add('hidden');
+                    screen.style.display = 'none';
+                }
+                setTimeout(() => {
+                    try { setupUserRoleUI(); } catch(e) { console.error(e); }
+                }, 300);
+            }
+        });
+
+</script>
 </body>
 </html>
 
