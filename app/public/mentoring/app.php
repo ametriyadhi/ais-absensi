@@ -189,31 +189,42 @@ if ($userRole === 'siswa') {
 
     // Auto-sync Historical Rekap & Adab Store from MariaDB
     document.addEventListener('DOMContentLoaded', function() {
+        // Load Rekap Data
         fetch('api.php?action=getRekapData')
             .then(r => r.json())
             .then(res => {
                 if (res && res.success && res.data && res.data.length > 0) {
                     console.log('Loaded historical rekap data from DB:', res.data.length);
-                    const existingKeys = new Set(MENTORING_REKAP_DATA.map(r => r.mentee + '_' + (r.pekan || '') + '_' + (r.tanggal || '')));
-                    res.data.forEach(item => {
-                        const key = item.mentee + '_' + (item.sesiKey || '') + '_' + (item.tanggal || '');
-                        if (!existingKeys.has(key)) {
-                            MENTORING_REKAP_DATA.unshift(item);
-                        }
-                    });
+                    // Langsung gantikan / integrasikan ke MENTORING_REKAP_DATA
+                    MENTORING_REKAP_DATA = res.data;
+                    try { localStorage.setItem('MIP_REKAP_STORE', JSON.stringify(MENTORING_REKAP_DATA)); } catch(e){}
                     if (typeof renderRekapMatrixTable === 'function') renderRekapMatrixTable();
                     if (typeof renderDashboardAspectsCharts === 'function') renderDashboardAspectsCharts();
                 }
             }).catch(e => console.warn('Could not load rekap data:', e));
 
+        // Load Adab Data
         fetch('api.php?action=getAdabData')
             .then(r => r.json())
             .then(res => {
                 if (res && res.success && res.data) {
                     console.log('Loaded historical adab data from DB:', Object.keys(res.data).length);
                     Object.assign(SISWA_ADAB_STORE, res.data);
+                    try { localStorage.setItem('MIP_SISWA_ADAB_STORE', JSON.stringify(SISWA_ADAB_STORE)); } catch(e){}
                 }
             }).catch(e => console.warn('Could not load adab data:', e));
+
+        // Load Bank Materi
+        fetch('api.php?action=getBankMateri')
+            .then(r => r.json())
+            .then(res => {
+                if (res && res.success && res.data && res.data.length > 0) {
+                    console.log('Loaded bank materi from DB:', res.data.length);
+                    BANK_MATERI_DATA = res.data;
+                    if (typeof populateAdabMateriSelect === 'function') populateAdabMateriSelect();
+                    if (typeof renderBankMateriCards === 'function') renderBankMateriCards();
+                }
+            }).catch(e => console.warn('Could not load bank materi:', e));
     });
     </script>
 
@@ -2922,8 +2933,13 @@ efleksi] || (entry.refleksiAnswers ? entry.refleksiAnswers[i] : '')) : '';
             const container = document.getElementById('materiCardsList');
 
             const filtered = BANK_MATERI_DATA.filter(m => {
-                const matchK = (filterKelas === 'Semua' || m.kelas === 'Semua' || m.kelas.includes(filterKelas));
-                const matchP = (filterPekan === 'Semua' || m.pekan === 'Semua' || m.pekan.includes(filterPekan));
+                const kStr = (m.kelas || '').toString().toLowerCase();
+                const pStr = (m.pekan || '').toString().toLowerCase();
+                const fK = filterKelas.toLowerCase();
+                const fP = filterPekan.toLowerCase();
+
+                const matchK = (fK === 'semua' || kStr === 'semua' || kStr.includes(fK));
+                const matchP = (fP === 'semua' || pStr === 'semua' || pStr.includes(fP));
                 return matchK && matchP;
             });
 
