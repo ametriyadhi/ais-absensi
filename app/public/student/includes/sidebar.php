@@ -15,7 +15,7 @@ $currentScript = basename($_SERVER['SCRIPT_NAME'] ?? '');
                 <small style="color: #94a3b8; font-size: 11px;">An-Nahl Islamic School</small>
             </div>
         </div>
-        <button type="button" class="btn-close-sidebar" onclick="toggleStudentSidebar()" style="display: none; background: none; border: none; color: #94a3b8; font-size: 18px; cursor: pointer;">
+        <button type="button" class="btn-close-sidebar" onclick="toggleStudentSidebar()" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; width: 34px; height: 34px; align-items: center; justify-content: center; color: #cbd5e1; font-size: 16px; cursor: pointer;">
             <i class="fa-solid fa-xmark"></i>
         </button>
     </div>
