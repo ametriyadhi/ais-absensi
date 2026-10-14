@@ -50,6 +50,20 @@ $currentScript = basename($_SERVER['SCRIPT_NAME'] ?? '');
         </a>
 
         <div style="padding: 12px 12px 6px 12px; font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">
+            Pembinaan & Karakter
+        </div>
+
+        <a href="adab.php" style="display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 8px; text-decoration: none; font-size: 13.5px; font-weight: 600; transition: all 0.2s; color: <?= $currentScript === 'adab.php' ? '#ffffff' : '#94a3b8' ?>; background: <?= $currentScript === 'adab.php' ? '#0284c7' : 'transparent' ?>;">
+            <i class="fa-solid fa-heart-circle-check" style="width: 18px;"></i>
+            <span>Pembiasaan Adab</span>
+        </a>
+
+        <a href="mentoring_notes.php" style="display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 8px; text-decoration: none; font-size: 13.5px; font-weight: 600; transition: all 0.2s; color: <?= $currentScript === 'mentoring_notes.php' ? '#ffffff' : '#94a3b8' ?>; background: <?= $currentScript === 'mentoring_notes.php' ? '#0284c7' : 'transparent' ?>;">
+            <i class="fa-solid fa-hands-holding-child" style="width: 18px;"></i>
+            <span>Catatan Mentoring</span>
+        </a>
+
+        <div style="padding: 12px 12px 6px 12px; font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">
             Akun & Keamanan
         </div>
 
