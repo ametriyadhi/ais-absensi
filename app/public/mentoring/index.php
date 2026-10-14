@@ -155,22 +155,28 @@ require __DIR__ . '/../../includes/header.php';
             </p>
         </div>
 
-        <?php if ($isPrivileged): ?>
-            <!-- Filter Pilihan Guru Mentor Khusus Pimpinan -->
-            <form method="GET" style="display: flex; gap: 8px; align-items: center;">
-                <select name="mentor_id" class="filter-input" style="padding: 8px 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px;" onchange="this.form.submit()">
-                    <option value="0">-- Semua Guru Mentor (<?= count($mentorsList) ?>) --</option>
-                    <?php foreach ($mentorsList as $m): ?>
-                        <option value="<?= $m['id'] ?>" <?= $filterMentorId == $m['id'] ? 'selected' : '' ?>>
-                            <?= e($m['name']) ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-                <?php if ($filterMentorId > 0): ?>
-                    <a href="index.php" class="btn btn-secondary" style="padding: 8px 12px; font-size: 13px;">Reset</a>
-                <?php endif; ?>
-            </form>
-        <?php endif; ?>
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <a href="app.php" target="_blank" class="btn" style="padding: 8px 16px; font-size: 13px; font-weight: 800; background: linear-gradient(135deg, #059669 0%, #047857 100%); color: white; border-radius: 8px; text-decoration: none; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 6px -1px rgba(5,150,105,0.25);">
+                <i class="fa-solid fa-desktop"></i> Buka Tampilan Aplikasi Asli (Full SPA)
+            </a>
+
+            <?php if ($isPrivileged): ?>
+                <!-- Filter Pilihan Guru Mentor Khusus Pimpinan -->
+                <form method="GET" style="display: flex; gap: 8px; align-items: center;">
+                    <select name="mentor_id" class="filter-input" style="padding: 8px 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px;" onchange="this.form.submit()">
+                        <option value="0">-- Semua Guru Mentor (<?= count($mentorsList) ?>) --</option>
+                        <?php foreach ($mentorsList as $m): ?>
+                            <option value="<?= $m['id'] ?>" <?= $filterMentorId == $m['id'] ? 'selected' : '' ?>>
+                                <?= e($m['name']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <?php if ($filterMentorId > 0): ?>
+                        <a href="index.php" class="btn btn-secondary" style="padding: 8px 12px; font-size: 13px;">Reset</a>
+                    <?php endif; ?>
+                </form>
+            <?php endif; ?>
+        </div>
     </div>
 
     <!-- 4 Metrik Ringkasan -->
