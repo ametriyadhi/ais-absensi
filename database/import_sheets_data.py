@@ -15,11 +15,7 @@ DB_PASS = os.getenv('DB_PASSWORD', '')
 DB_NAME = os.getenv('DB_NAME', 'library_v4')
 
 def run_mysql(sql):
-    pass_arg = f'-p{DB_PASS}' if DB_PASS else ''
-    cmd = ['docker', 'exec', '-i', 'ais_absensi_db', 'mysql', '-u', DB_USER]
-    if DB_PASS:
-        cmd.append(pass_arg)
-    cmd.extend([DB_NAME, '--default-character-set=utf8mb4'])
+    cmd = ['docker', 'exec', '-i', 'ais_absensi_db', 'mysql', '-u', DB_USER, '-pabsensi_secret_pass_2026', DB_NAME, '--default-character-set=utf8mb4']
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE,
@@ -44,7 +40,8 @@ def esc(val):
 
 def main():
     print("=== MEMULAI MIGRASI DATA SPREADSHEET KE MARIADB ===")
-    wb = openpyxl.load_workbook('/tmp/mentoring_siswa.xlsx', data_only=True)
+    xlsx_path = '/tmp/mentoring_fresh.xlsx' if os.path.exists('/tmp/mentoring_fresh.xlsx') else '/tmp/mentoring_siswa.xlsx'
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
 
     # 1. AMBIL DATA SISWA DARI DB
     res = run_mysql("SELECT id, name, nis FROM students;")
@@ -247,10 +244,21 @@ def main():
         # Cari student_id
         student_id = db_students_by_name.get(mentee_name.lower())
         if not student_id:
-            for k_name, sid in db_students_by_name.items():
-                if mentee_name.lower() in k_name or k_name in mentee_name.lower():
-                    student_id = sid
-                    break
+            # Alias mapping untuk nama yang sedikit berbeda di sheet
+            aliases = {
+                "mikhail jovian hasbullah": "mikhail jovian",
+                "hawa kami latuzzahra": "hawa kamilatuzzahra",
+                "ayla jamayra ihsan": "ayla zamayra ihsan",
+                "ahmad soleh, s.pd": "affan eferat hasan" # Kasus terbalik nama mentor & mentee
+            }
+            mapped_name = aliases.get(mentee_name.lower())
+            if mapped_name and mapped_name in db_students_by_name:
+                student_id = db_students_by_name[mapped_name]
+            else:
+                for k_name, sid in db_students_by_name.items():
+                    if mentee_name.lower() in k_name or k_name in mentee_name.lower():
+                        student_id = sid
+                        break
 
         if not student_id:
             continue
