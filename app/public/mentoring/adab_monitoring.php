@@ -6,6 +6,10 @@ require_once __DIR__ . '/../../config/security.php';
 require_once __DIR__ . '/../../includes/functions.php';
 
 requireLogin();
+if (($_SESSION['role'] ?? '') === 'siswa') {
+    header('Location: ../student/adab.php');
+    exit;
+}
 
 $pageTitle = 'Pemantauan Pembiasaan Adab & Refleksi Santri';
 $currentRole = currentRole();

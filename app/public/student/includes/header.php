@@ -14,6 +14,13 @@ $flash = getFlash();
 $currentUserId = (int)$_SESSION['user_id'];
 $studentId = (int)($_SESSION['student_id'] ?? 0);
 
+if ($studentId <= 0 && $currentUserId > 0) {
+    $stmtFind = $pdo->prepare("SELECT student_id FROM users WHERE id = ?");
+    $stmtFind->execute([$currentUserId]);
+    $studentId = (int)$stmtFind->fetchColumn();
+    $_SESSION['student_id'] = $studentId;
+}
+
 // Tarik data lengkap siswa dari DB
 $stmtStudent = $pdo->prepare("
     SELECT s.*, cg.name as class_name, g.grade, un.unit as unit_name,

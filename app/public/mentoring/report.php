@@ -6,6 +6,10 @@ require_once __DIR__ . '/../../config/security.php';
 require_once __DIR__ . '/../../includes/functions.php';
 
 requireLogin();
+if (($_SESSION['role'] ?? '') === 'siswa') {
+    header('Location: ../student/mentoring_notes.php');
+    exit;
+}
 
 $pageTitle = 'Laporan & Raport Mentoring Siswa';
 $isPrivileged = in_array(currentRole(), ['super_admin', 'kepala_sekolah']);
