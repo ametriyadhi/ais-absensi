@@ -13,7 +13,12 @@ if (!function_exists('cal_days_in_month')) {
 
 if (!function_exists('redirect')) {
     function redirect($url) {
-        header('Location: ' . $url);
+        if (!headers_sent()) {
+            header('Location: ' . $url);
+            exit;
+        }
+        echo '<script>window.location.href = ' . json_encode($url) . ';</script>';
+        echo '<noscript><meta http-equiv="refresh" content="0;url=' . htmlspecialchars($url, ENT_QUOTES, 'UTF-8') . '"></noscript>';
         exit;
     }
 }
