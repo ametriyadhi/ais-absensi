@@ -14,7 +14,7 @@ if (($_SESSION['role'] ?? '') === 'siswa') {
 $pageTitle = 'Dashboard Mentoring Siswa (MIP)';
 $currentRole = currentRole();
 $userId = currentUserId();
-$isPrivileged = in_array($currentRole, ['super_admin', 'kepala_sekolah']);
+$isPrivileged = in_array($currentRole, ['super_admin', 'admin', 'kepala_sekolah']);
 
 // Flash message
 $flashMessage = '';
@@ -48,34 +48,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
     $notesFb    = trim($_POST['notes_feedback'] ?? '');
 
-    if ($studentId > 0) {
-        // Keamanan: Jika bukan Super Admin/Kepsek, pastikan santri ini memang mentee binaan user yang sedang login
-        if (!$isPrivileged) {
-            $linkedIds = getMentorLinkedUserIds($pdo, $userId);
-            $inQ = implode(',', array_fill(0, count($linkedIds), '?'));
-            $checkAssign = $pdo->prepare("SELECT COUNT(*) FROM mentoring_assignments WHERE student_id = ? AND mentor_user_id IN ($inQ) AND is_active = 1");
-            $checkAssign->execute(array_merge([$studentId], $linkedIds));
-            if ($checkAssign->fetchColumn() == 0) {
-                flash('danger', 'Akses ditolak: Santri ini bukan merupakan santri binaan kelompok Anda.');
-                redirect('index.php');
-            }
-        }
-
-        $stmtIns = $pdo->prepare("
-            INSERT INTO mentoring_sessions (
-                student_id, mentor_user_id, session_date, session_code, month_name, year_val,
-                score_mip, notes_mip, score_academic, notes_academic, score_mutabaah, notes_mutabaah,
-                score_adab, notes_adab, score_feedback, notes_feedback, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NOW())
-        ");
-        $stmtIns->execute([
-            $studentId, $mentorUserId, $sessionDate, $sessionCode, $monthName, $yearVal,
-            $scoreMip, $notesMip, $scoreAcad, $notesAcad, $scoreMut, $notesMut,
-            $scoreAdab, $notesAdab, $notesFb
-        ]);
-
-        flash('success', 'Jurnal sesi mentoring santri berhasil dicatat dan tersimpan ke basis data.');
+    if ($studentId <= 0) {
+        flash('danger', 'Gagal menyimpan: Santri binaan tidak teridentifikasi. Silakan pilih santri kembali.');
+        redirect('index.php');
     }
+
+    // Keamanan: Jika bukan Super Admin/Kepsek/Admin, pastikan santri ini memang mentee binaan user yang sedang login
+    if (!$isPrivileged) {
+        $linkedIds = getMentorLinkedUserIds($pdo, $userId);
+        $inQ = implode(',', array_fill(0, count($linkedIds), '?'));
+        $checkAssign = $pdo->prepare("SELECT COUNT(*) FROM mentoring_assignments WHERE student_id = ? AND mentor_user_id IN ($inQ) AND is_active = 1");
+        $checkAssign->execute(array_merge([$studentId], $linkedIds));
+        if ($checkAssign->fetchColumn() == 0) {
+            flash('danger', 'Akses ditolak: Santri ini bukan merupakan santri binaan kelompok Anda.');
+            redirect('index.php');
+        }
+    }
+
+    $stmtIns = $pdo->prepare("
+        INSERT INTO mentoring_sessions (
+            student_id, mentor_user_id, session_date, session_code, month_name, year_val,
+            score_mip, notes_mip, score_academic, notes_academic, score_mutabaah, notes_mutabaah,
+            score_adab, notes_adab, score_feedback, notes_feedback, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NOW())
+    ");
+    $stmtIns->execute([
+        $studentId, $mentorUserId, $sessionDate, $sessionCode, $monthName, $yearVal,
+        $scoreMip, $notesMip, $scoreAcad, $notesAcad, $scoreMut, $notesMut,
+        $scoreAdab, $notesAdab, $notesFb
+    ]);
+
+    flash('success', 'Alhamdulillah! Jurnal evaluasi mentoring santri berhasil disimpan ke basis data.');
     redirect('index.php');
 }
 
@@ -520,7 +523,7 @@ require __DIR__ . '/../../includes/header.php';
             <button type="button" onclick="closeSessionModal()" style="border: none; background: none; font-size: 20px; color: #94a3b8; cursor: pointer;">&times;</button>
         </div>
 
-        <form method="POST" action="index.php">
+        <form method="POST" action="" id="formSessionMentoring">
             <?= csrfField() ?>
             <input type="hidden" name="action" value="save_session">
             <input type="hidden" name="student_id" id="modalStudentId" value="">
@@ -595,7 +598,7 @@ require __DIR__ . '/../../includes/header.php';
 
             <div style="display: flex; justify-content: flex-end; gap: 10px;">
                 <button type="button" onclick="closeSessionModal()" class="btn btn-secondary" style="padding: 10px 18px; font-size: 13px;">Batal</button>
-                <button type="submit" class="btn btn-primary" style="padding: 10px 24px; font-size: 13px; font-weight: 700;">
+                <button type="submit" id="btnSubmitSession" class="btn btn-primary" style="padding: 10px 24px; font-size: 13px; font-weight: 700;">
                     <i class="fa-solid fa-floppy-disk"></i> Simpan Jurnal Evaluasi
                 </button>
             </div>
@@ -608,11 +611,31 @@ function openSessionModal(studentId, studentName, mentorId) {
     document.getElementById('modalStudentId').value = studentId;
     document.getElementById('modalStudentName').textContent = studentName;
     document.getElementById('modalMentorUserId').value = mentorId;
+    
+    // Reset submit button state
+    const btn = document.getElementById('btnSubmitSession');
+    if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Simpan Jurnal Evaluasi';
+    }
+    
     document.getElementById('modalSession').style.display = 'flex';
 }
 
 function closeSessionModal() {
     document.getElementById('modalSession').style.display = 'none';
+}
+
+// Visual loading saat tombol simpan diklik
+const sessionForm = document.getElementById('formSessionMentoring');
+if (sessionForm) {
+    sessionForm.addEventListener('submit', function() {
+        const btn = document.getElementById('btnSubmitSession');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Menyimpan...';
+        }
+    });
 }
 
 // Tutup modal jika klik di luar

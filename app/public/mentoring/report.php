@@ -12,7 +12,7 @@ if (($_SESSION['role'] ?? '') === 'siswa') {
 }
 
 $pageTitle = 'Laporan & Raport Mentoring Siswa';
-$isPrivileged = in_array(currentRole(), ['super_admin', 'kepala_sekolah']);
+$isPrivileged = in_array(currentRole(), ['super_admin', 'admin', 'kepala_sekolah']);
 $currentUserId = currentUserId();
 
 // 1. FILTER TAHUN PELAJARAN, BULAN & MENTOR

@@ -177,7 +177,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 <div style="display: flex; flex-direction: column; gap: 20px;">
 
     <!-- Flash message -->
-    <?php if ($flash): ?>
+    <?php $flash = $flash ?? getFlash(); if ($flash): ?>
         <div class="alert alert-<?= $flash['type'] === 'success' ? 'success' : 'danger' ?>" style="display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-radius: 12px; background: <?= $flash['type'] === 'success' ? '#ecfdf5' : '#fef2f2' ?>; color: <?= $flash['type'] === 'success' ? '#065f46' : '#991b1b' ?>; border: 1px solid <?= $flash['type'] === 'success' ? '#a7f3d0' : '#fecaca' ?>;">
             <i class="fa-solid <?= $flash['type'] === 'success' ? 'fa-circle-check' : 'fa-circle-exclamation' ?>" style="font-size: 18px;"></i>
             <span style="font-size: 13.5px; font-weight: 600;"><?= e($flash['message']) ?></span>

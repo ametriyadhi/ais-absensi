@@ -41,6 +41,12 @@ if (!function_exists('getFlash')) {
     }
 }
 
+if (!function_exists('setFlash')) {
+    function setFlash($type, $message) {
+        flash($type, $message);
+    }
+}
+
 // =========================================================================
 // ACCESS CONTROL — DATABASE-DRIVEN ACL
 // =========================================================================
@@ -1502,6 +1508,12 @@ if (!function_exists('getMentorLinkedUserIds')) {
             // Subaehah
             17     => [17, 100133],
             100133 => [17, 100133],
+            // Eko Sukristian Adi Nugeroho, M.Pd
+            13     => [13, 100135],
+            100135 => [13, 100135],
+            // Ade Iwan, S.Sy
+            25     => [25, 100142],
+            100142 => [25, 100142],
         ];
 
         return $aliasMap[$userId] ?? [$userId];
