@@ -47,8 +47,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     if ($studentId > 0) {
         // Keamanan: Jika bukan Super Admin/Kepsek, pastikan santri ini memang mentee binaan user yang sedang login
         if (!$isPrivileged) {
-            $checkAssign = $pdo->prepare("SELECT COUNT(*) FROM mentoring_assignments WHERE student_id = ? AND mentor_user_id = ? AND is_active = 1");
-            $checkAssign->execute([$studentId, $userId]);
+            $linkedIds = getMentorLinkedUserIds($pdo, $userId);
+            $inQ = implode(',', array_fill(0, count($linkedIds), '?'));
+            $checkAssign = $pdo->prepare("SELECT COUNT(*) FROM mentoring_assignments WHERE student_id = ? AND mentor_user_id IN ($inQ) AND is_active = 1");
+            $checkAssign->execute(array_merge([$studentId], $linkedIds));
             if ($checkAssign->fetchColumn() == 0) {
                 flash('danger', 'Akses ditolak: Santri ini bukan merupakan santri binaan kelompok Anda.');
                 redirect('index.php');
@@ -108,8 +110,12 @@ if ($activeAyId > 0) {
 }
 
 if ($filterMentorId > 0) {
-    $whereAssigned[] = "ma.mentor_user_id = ?";
-    $paramsAssigned[] = $filterMentorId;
+    $linkedMentorIds = getMentorLinkedUserIds($pdo, $filterMentorId);
+    $inQ = implode(',', array_fill(0, count($linkedMentorIds), '?'));
+    $whereAssigned[] = "ma.mentor_user_id IN ($inQ)";
+    foreach ($linkedMentorIds as $lId) {
+        $paramsAssigned[] = $lId;
+    }
 }
 
 $whereSql = !empty($whereAssigned) ? "WHERE " . implode(' AND ', $whereAssigned) : "";
@@ -148,6 +154,16 @@ foreach ($mentees as $m) {
 $overallAvgAdab = $countAdab > 0 ? round($sumAdab / $countAdab, 1) : 0;
 
 // TARIK RIWAYAT SESI TERBARU
+if ($filterMentorId > 0) {
+    $linkedRecentIds = getMentorLinkedUserIds($pdo, $filterMentorId);
+    $inQRecent = implode(',', array_fill(0, count($linkedRecentIds), '?'));
+    $whereRecentSql = "WHERE ms.mentor_user_id IN ($inQRecent)";
+    $paramsRecent = $linkedRecentIds;
+} else {
+    $whereRecentSql = "";
+    $paramsRecent = [];
+}
+
 $stmtRecent = $pdo->prepare("
     SELECT ms.*, s.name as student_name, s.nis, cg.name as class_name, u.name as mentor_name
     FROM mentoring_sessions ms
@@ -155,11 +171,11 @@ $stmtRecent = $pdo->prepare("
     JOIN users u ON u.id = ms.mentor_user_id
     LEFT JOIN student_enrollments se ON se.student_id = s.id AND se.status = 'active'
     LEFT JOIN class_groups cg ON cg.id = se.class_group_id
-    " . ($filterMentorId > 0 ? "WHERE ms.mentor_user_id = ?" : "") . "
+    {$whereRecentSql}
     ORDER BY ms.session_date DESC, ms.id DESC
     LIMIT 25
 ");
-$stmtRecent->execute($filterMentorId > 0 ? [$filterMentorId] : []);
+$stmtRecent->execute($paramsRecent);
 $recentSessions = $stmtRecent->fetchAll(PDO::FETCH_ASSOC);
 
 require __DIR__ . '/../../includes/header.php';

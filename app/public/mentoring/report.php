@@ -63,8 +63,12 @@ $sqlMentees = "
 ";
 $paramsMentees = [$filterAyId];
 if ($filterMentor > 0) {
-    $sqlMentees .= " AND ma.mentor_user_id = ?";
-    $paramsMentees[] = $filterMentor;
+    $linkedMentorIds = getMentorLinkedUserIds($pdo, $filterMentor);
+    $inQ = implode(',', array_fill(0, count($linkedMentorIds), '?'));
+    $sqlMentees .= " AND ma.mentor_user_id IN ($inQ)";
+    foreach ($linkedMentorIds as $lId) {
+        $paramsMentees[] = $lId;
+    }
 }
 if (!empty($filterClass)) {
     $sqlMentees .= " AND cg.name = ?";
