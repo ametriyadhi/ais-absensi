@@ -1,32 +1,44 @@
 <?php
 
-// Deteksi HTTPS dari direct connection, Cloudflare, atau reverse proxy
-$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-    || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https')
-    || (!empty($_SERVER['HTTP_CF_VISITOR']) && strpos($_SERVER['HTTP_CF_VISITOR'], 'https') !== false)
-    || (!empty($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443);
+// Deteksi Skema & Host Otomatis
+$isHttps = (
+    (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ||
+    (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') ||
+    (!empty($_SERVER['HTTP_CF_VISITOR']) && strpos($_SERVER['HTTP_CF_VISITOR'], 'https') !== false) ||
+    (!empty($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443)
+);
+$scheme = $isHttps ? 'https://' : 'http://';
+$httpHost = $_SERVER['HTTP_HOST'] ?? 'localhost';
 
-$protocol = $isHttps ? 'https://' : 'http://';
-$host = $_SERVER['HTTP_HOST'] ?? 'localhost:8089';
-$rootUrl = rtrim($protocol . $host, '/');
+// Deteksi subdirektori aplikasi (misal: /absensi-anak di Laragon, atau root di subdomain live)
+$subPath = '';
+if (!empty($_SERVER['DOCUMENT_ROOT'])) {
+    $docRoot = str_replace('\\', '/', realpath($_SERVER['DOCUMENT_ROOT']) ?: $_SERVER['DOCUMENT_ROOT']);
+    $appRoot = str_replace('\\', '/', dirname(__DIR__));
+    if ($docRoot && strpos($appRoot, $docRoot) === 0) {
+        $subPath = substr($appRoot, strlen($docRoot));
+    }
+}
+if ($subPath === '' && isset($_SERVER['SCRIPT_NAME'])) {
+    $scriptDir = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME']));
+    if (strpos($scriptDir, '/public') !== false) {
+        $subPath = substr($scriptDir, 0, strpos($scriptDir, '/public'));
+    }
+}
+$subPath = rtrim(str_replace('\\', '/', $subPath), '/');
 
-// Menggunakan root-relative path agar selalu bekerja baik di localhost maupun di domain Cloudflare
 if (!defined('BASE_URL')) {
-    define('BASE_URL', getenv('APP_BASE_URL') ?: '/public');
+    define('BASE_URL', getenv('APP_BASE_URL') ?: ($subPath ? ($scheme . $httpHost . $subPath . '/public') : '/public'));
 }
-
 if (!defined('ASSET_URL')) {
-    define('ASSET_URL', getenv('APP_ASSET_URL') ?: '/assets');
+    define('ASSET_URL', getenv('APP_ASSET_URL') ?: ($subPath ? ($scheme . $httpHost . $subPath . '/assets') : '/assets'));
 }
-
 if (!defined('UPLOAD_URL')) {
-    define('UPLOAD_URL', getenv('APP_UPLOAD_URL') ?: '/uploads');
+    define('UPLOAD_URL', getenv('APP_UPLOAD_URL') ?: ($subPath ? ($scheme . $httpHost . $subPath . '/uploads') : '/uploads'));
 }
-
 if (!defined('UPLOAD_PATH')) {
     define('UPLOAD_PATH', dirname(__DIR__) . '/uploads');
 }
-
 if (!defined('UPLOAD_STUDENT')) {
     define('UPLOAD_STUDENT', dirname(__DIR__) . '/uploads/students/');
 }
@@ -66,7 +78,7 @@ if (!defined('SCHOOL_RADIUS_METERS')) {
     define('SCHOOL_RADIUS_METERS', (int)(getenv('SCHOOL_RADIUS_METERS') ?: 250));
 }
 
-// PSR-4 Autoloader untuk namespace App\
+// PSR-4 Autoloader untuk namespace App
 spl_autoload_register(function ($class) {
     $prefix = 'App\\';
     $baseDir = dirname(__DIR__) . '/src/';

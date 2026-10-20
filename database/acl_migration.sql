@@ -72,7 +72,10 @@ INSERT IGNORE INTO `app_menus` (`menu_key`, `menu_name`, `category`, `menu_url`,
 ('access_control',           'Manajemen Akses & User',   'PENGATURAN',  'kelola/index.php',                 'fa-user-cog',         18),
 ('user_activity',            'Aktivitas Pengguna',       'PENGATURAN',  'kelola/activity.php',             'fa-user-clock',       19),
 ('data_cctv',                'Data CCTV',                'PENGATURAN',  'cctv/index.php',                   'fa-video',            20),
-('activity_logs',            'Log Aktivitas',            'PENGATURAN',  'kelola/audit_logs.php',            'fa-clock-rotate-left',22);
+('kelola_wa_dashboard',      'Dashboard WA Gateway',     'PENGATURAN',  'kelola/wa_dashboard.php',          'fa-chart-pie',        21),
+('kelola_audit_logs',        'Audit Log Aktivitas',      'PENGATURAN',  'kelola/audit_logs.php',            'fa-clock-rotate-left',22),
+('kelola_message_templates', 'Template Pesan Unit',      'PENGATURAN',  'kelola/message_templates.php',     'fa-comments',         23),
+('super_kelola_akun',        'Kelola Akun Cadangan',     'PENGATURAN',  'kelola/super/index.php',           'fa-users-gear',       24);
 
 -- -------------------------------------------------------------------------
 -- 3. TABEL: role_menu_access — Hak Akses Menu Default per Role
@@ -240,9 +243,6 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'weekly_schedules' AND COLUMN_NAME = 'schedule_type') THEN
     ALTER TABLE `weekly_schedules` ADD COLUMN `schedule_type` ENUM('reguler', 'eskul') NOT NULL DEFAULT 'reguler' AFTER `class_group_id`;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'weekly_schedules' AND COLUMN_NAME = 'name') THEN
-    ALTER TABLE `weekly_schedules` ADD COLUMN `name` VARCHAR(100) NULL DEFAULT NULL AFTER `schedule_type`;
-  END IF;
   IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'weekly_schedules' AND COLUMN_NAME = 'student_in') THEN
     ALTER TABLE `weekly_schedules` ADD COLUMN `student_in` TIME NULL DEFAULT '00:00:00' AFTER `day_code`;
   END IF;
@@ -274,16 +274,14 @@ DROP PROCEDURE IF EXISTS `AddColAutoAttendances`;
 DELIMITER //
 CREATE PROCEDURE `AddColAutoAttendances`()
 BEGIN
-  IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'auto_attendances') THEN
-    IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'auto_attendances' AND COLUMN_NAME = 'user_id') THEN
-      ALTER TABLE `auto_attendances` ADD COLUMN `user_id` INT NULL AFTER `unit_id`;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'auto_attendances' AND COLUMN_NAME = 'grade_id') THEN
-      ALTER TABLE `auto_attendances` ADD COLUMN `grade_id` INT NULL AFTER `user_id`;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'auto_attendances' AND COLUMN_NAME = 'class_group_id') THEN
-      ALTER TABLE `auto_attendances` ADD COLUMN `class_group_id` INT NULL AFTER `grade_id`;
-    END IF;
+  IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'auto_attendances' AND COLUMN_NAME = 'user_id') THEN
+    ALTER TABLE `auto_attendances` ADD COLUMN `user_id` INT NULL AFTER `unit_id`;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'auto_attendances' AND COLUMN_NAME = 'grade_id') THEN
+    ALTER TABLE `auto_attendances` ADD COLUMN `grade_id` INT NULL AFTER `user_id`;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'auto_attendances' AND COLUMN_NAME = 'class_group_id') THEN
+    ALTER TABLE `auto_attendances` ADD COLUMN `class_group_id` INT NULL AFTER `grade_id`;
   END IF;
 END //
 DELIMITER ;
