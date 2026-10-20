@@ -1101,6 +1101,33 @@ require_once __DIR__ . '/../../includes/header.php';
 /* =========================================================================
    2D CRUD MATRIX & MULTI-ROLE ADVANCED STYLING
    ========================================================================= */
+/* RESET CHECKBOXES SECARA KETAT DI SELURUH MATRIKS (ANTI-EXPAND IPAD / MOBILE) */
+.crud-matrix-wrapper input[type="checkbox"],
+.crud-matrix-table input[type="checkbox"],
+input[type="checkbox"].crud-chk,
+input[type="checkbox"].crud-header-chk,
+input[type="checkbox"].crud-row-all {
+    width: 19px !important;
+    height: 19px !important;
+    min-width: 19px !important;
+    max-width: 19px !important;
+    min-height: 19px !important;
+    max-height: 19px !important;
+    padding: 0 !important;
+    margin: 0 auto !important;
+    border: 1.5px solid #94a3b8 !important;
+    border-radius: 4px !important;
+    background-color: #ffffff !important;
+    outline: none !important;
+    box-shadow: none !important;
+    cursor: pointer !important;
+    display: inline-block !important;
+    vertical-align: middle !important;
+    box-sizing: border-box !important;
+    -webkit-appearance: checkbox !important;
+    appearance: checkbox !important;
+}
+
 .crud-matrix-wrapper {
     background: #ffffff;
     border: 1px solid #e2e8f0;
@@ -1133,27 +1160,28 @@ require_once __DIR__ . '/../../includes/header.php';
 .crud-table-scroll {
     max-height: 52vh;
     overflow-y: auto;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 .crud-matrix-table {
     width: 100%;
+    min-width: 680px;
     border-collapse: collapse;
     font-size: 13px;
+    table-layout: auto;
 }
 .crud-matrix-table thead th {
     position: sticky;
     top: 0;
-    background: #f1f5f9;
+    background: #f8fafc;
     color: #475569;
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 10px 12px;
+    padding: 10px 6px;
     border-bottom: 2px solid #cbd5e1;
     z-index: 10;
+    vertical-align: middle;
 }
 .crud-cat-header-row td {
-    background: #f8fafc;
+    background: #f1f5f9;
     padding: 8px 14px;
     border-top: 1px solid #e2e8f0;
     border-bottom: 1px solid #e2e8f0;
@@ -1169,34 +1197,105 @@ require_once __DIR__ . '/../../includes/header.php';
     gap: 6px;
 }
 .crud-row td {
-    padding: 9px 12px;
+    padding: 9px 8px;
     border-bottom: 1px solid #f1f5f9;
     vertical-align: middle;
 }
 .crud-row:hover {
     background: #f8fafc;
 }
-.crud-chk {
-    width: 17px;
-    height: 17px;
-    cursor: pointer;
-    accent-color: var(--primary, #4f46e5);
-}
-.crud-row-all {
-    width: 17px;
-    height: 17px;
-    cursor: pointer;
-    accent-color: #0284c7;
-}
-.col-header-chk-label {
-    display: inline-flex;
+
+/* Modern Stacked Header for CRUD Matrix */
+.matrix-th-col {
+    display: flex;
+    flex-direction: column;
     align-items: center;
+    justify-content: center;
     gap: 5px;
-    cursor: pointer;
     user-select: none;
-    font-weight: 700;
-    font-size: 11.5px;
 }
+.matrix-th-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    text-align: center;
+    line-height: 1.3;
+}
+.matrix-th-badge.badge-read {
+    background: #e0f2fe;
+    color: #0284c7;
+    border: 1px solid #bae6fd;
+}
+.matrix-th-badge.badge-create {
+    background: #dcfce7;
+    color: #15803d;
+    border: 1px solid #bbf7d0;
+}
+.matrix-th-badge.badge-edit {
+    background: #fef3c7;
+    color: #b45309;
+    border: 1px solid #fde68a;
+}
+.matrix-th-badge.badge-delete {
+    background: #fee2e2;
+    color: #b91c1c;
+    border: 1px solid #fecaca;
+}
+.matrix-th-badge.badge-all {
+    background: #f1f5f9;
+    color: #475569;
+    border: 1px solid #cbd5e1;
+}
+.matrix-th-chk-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    margin: 0 !important;
+    padding: 2px !important;
+    border: none !important;
+    background: transparent !important;
+    width: auto !important;
+}
+.matrix-th-subtext {
+    font-size: 10px;
+    color: #64748b;
+    font-weight: 600;
+}
+
+/* Distinct Accent Colors per Action */
+.crud-chk.user-chk-read:checked,
+.crud-chk.role-chk-read:checked,
+.crud-chk.create-chk-read:checked,
+.crud-header-chk[id*="_read"]:checked {
+    accent-color: #0284c7 !important;
+}
+.crud-chk.user-chk-create:checked,
+.crud-chk.role-chk-create:checked,
+.crud-chk.create-chk-create:checked,
+.crud-header-chk[id*="_create"]:checked {
+    accent-color: #16a34a !important;
+}
+.crud-chk.user-chk-edit:checked,
+.crud-chk.role-chk-edit:checked,
+.crud-chk.create-chk-edit:checked,
+.crud-header-chk[id*="_edit"]:checked {
+    accent-color: #d97706 !important;
+}
+.crud-chk.user-chk-delete:checked,
+.crud-chk.role-chk-delete:checked,
+.crud-chk.create-chk-delete:checked,
+.crud-header-chk[id*="_delete"]:checked {
+    accent-color: #dc2626 !important;
+}
+.crud-row-all:checked {
+    accent-color: #4f46e5 !important;
+}
+
 .badge-crud-pill {
     display: inline-block;
     padding: 2px 6px;
@@ -2247,32 +2346,45 @@ require_once __DIR__ . '/../../includes/header.php';
                         <table class="crud-matrix-table" id="tableMatrixUser">
                             <thead>
                                 <tr>
-                                    <th style="min-width: 240px; text-align: left;">Modul / Fitur Aplikasi</th>
-                                    <th style="width: 80px; text-align: center;">
-                                        <label class="col-header-chk-label" title="Centang Read untuk semua menu">
-                                            <input type="checkbox" id="user_col_read" onchange="toggleMatrixCol('user', 'read', this.checked)">
-                                            <span>Read</span>
-                                        </label>
+                                    <th style="min-width: 250px; text-align: left; padding: 12px 14px;">Modul / Fitur Aplikasi</th>
+                                    <th style="width: 85px; min-width: 80px; text-align: center; padding: 8px 4px;">
+                                        <div class="matrix-th-col">
+                                            <span class="matrix-th-badge badge-read">READ</span>
+                                            <label class="matrix-th-chk-wrap" title="Pilih Semua Read">
+                                                <input type="checkbox" id="user_col_read" class="crud-header-chk" onchange="toggleMatrixCol('user', 'read', this.checked)">
+                                            </label>
+                                        </div>
                                     </th>
-                                    <th style="width: 80px; text-align: center;">
-                                        <label class="col-header-chk-label" title="Centang Create untuk semua menu">
-                                            <input type="checkbox" id="user_col_create" onchange="toggleMatrixCol('user', 'create', this.checked)">
-                                            <span>Create</span>
-                                        </label>
+                                    <th style="width: 85px; min-width: 80px; text-align: center; padding: 8px 4px;">
+                                        <div class="matrix-th-col">
+                                            <span class="matrix-th-badge badge-create">CREATE</span>
+                                            <label class="matrix-th-chk-wrap" title="Pilih Semua Create">
+                                                <input type="checkbox" id="user_col_create" class="crud-header-chk" onchange="toggleMatrixCol('user', 'create', this.checked)">
+                                            </label>
+                                        </div>
                                     </th>
-                                    <th style="width: 80px; text-align: center;">
-                                        <label class="col-header-chk-label" title="Centang Edit untuk semua menu">
-                                            <input type="checkbox" id="user_col_edit" onchange="toggleMatrixCol('user', 'edit', this.checked)">
-                                            <span>Edit</span>
-                                        </label>
+                                    <th style="width: 85px; min-width: 80px; text-align: center; padding: 8px 4px;">
+                                        <div class="matrix-th-col">
+                                            <span class="matrix-th-badge badge-edit">EDIT</span>
+                                            <label class="matrix-th-chk-wrap" title="Pilih Semua Edit">
+                                                <input type="checkbox" id="user_col_edit" class="crud-header-chk" onchange="toggleMatrixCol('user', 'edit', this.checked)">
+                                            </label>
+                                        </div>
                                     </th>
-                                    <th style="width: 80px; text-align: center;">
-                                        <label class="col-header-chk-label" title="Centang Delete untuk semua menu">
-                                            <input type="checkbox" id="user_col_delete" onchange="toggleMatrixCol('user', 'delete', this.checked)">
-                                            <span>Delete</span>
-                                        </label>
+                                    <th style="width: 85px; min-width: 80px; text-align: center; padding: 8px 4px;">
+                                        <div class="matrix-th-col">
+                                            <span class="matrix-th-badge badge-delete">DELETE</span>
+                                            <label class="matrix-th-chk-wrap" title="Pilih Semua Delete">
+                                                <input type="checkbox" id="user_col_delete" class="crud-header-chk" onchange="toggleMatrixCol('user', 'delete', this.checked)">
+                                            </label>
+                                        </div>
                                     </th>
-                                    <th style="width: 70px; text-align: center;">Semua</th>
+                                    <th style="width: 75px; min-width: 70px; text-align: center; padding: 8px 4px;">
+                                        <div class="matrix-th-col">
+                                            <span class="matrix-th-badge badge-all">SEMUA</span>
+                                            <span class="matrix-th-subtext">Baris</span>
+                                        </div>
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -2394,32 +2506,45 @@ require_once __DIR__ . '/../../includes/header.php';
                         <table class="crud-matrix-table" id="tableMatrixRole">
                             <thead>
                                 <tr>
-                                    <th style="min-width: 240px; text-align: left;">Modul / Fitur Aplikasi</th>
-                                    <th style="width: 80px; text-align: center;">
-                                        <label class="col-header-chk-label">
-                                            <input type="checkbox" id="role_col_read" onchange="toggleMatrixCol('role', 'read', this.checked)">
-                                            <span>Read</span>
-                                        </label>
+                                    <th style="min-width: 250px; text-align: left; padding: 12px 14px;">Modul / Fitur Aplikasi</th>
+                                    <th style="width: 85px; min-width: 80px; text-align: center; padding: 8px 4px;">
+                                        <div class="matrix-th-col">
+                                            <span class="matrix-th-badge badge-read">READ</span>
+                                            <label class="matrix-th-chk-wrap" title="Pilih Semua Read">
+                                                <input type="checkbox" id="role_col_read" class="crud-header-chk" onchange="toggleMatrixCol('role', 'read', this.checked)">
+                                            </label>
+                                        </div>
                                     </th>
-                                    <th style="width: 80px; text-align: center;">
-                                        <label class="col-header-chk-label">
-                                            <input type="checkbox" id="role_col_create" onchange="toggleMatrixCol('role', 'create', this.checked)">
-                                            <span>Create</span>
-                                        </label>
+                                    <th style="width: 85px; min-width: 80px; text-align: center; padding: 8px 4px;">
+                                        <div class="matrix-th-col">
+                                            <span class="matrix-th-badge badge-create">CREATE</span>
+                                            <label class="matrix-th-chk-wrap" title="Pilih Semua Create">
+                                                <input type="checkbox" id="role_col_create" class="crud-header-chk" onchange="toggleMatrixCol('role', 'create', this.checked)">
+                                            </label>
+                                        </div>
                                     </th>
-                                    <th style="width: 80px; text-align: center;">
-                                        <label class="col-header-chk-label">
-                                            <input type="checkbox" id="role_col_edit" onchange="toggleMatrixCol('role', 'edit', this.checked)">
-                                            <span>Edit</span>
-                                        </label>
+                                    <th style="width: 85px; min-width: 80px; text-align: center; padding: 8px 4px;">
+                                        <div class="matrix-th-col">
+                                            <span class="matrix-th-badge badge-edit">EDIT</span>
+                                            <label class="matrix-th-chk-wrap" title="Pilih Semua Edit">
+                                                <input type="checkbox" id="role_col_edit" class="crud-header-chk" onchange="toggleMatrixCol('role', 'edit', this.checked)">
+                                            </label>
+                                        </div>
                                     </th>
-                                    <th style="width: 80px; text-align: center;">
-                                        <label class="col-header-chk-label">
-                                            <input type="checkbox" id="role_col_delete" onchange="toggleMatrixCol('role', 'delete', this.checked)">
-                                            <span>Delete</span>
-                                        </label>
+                                    <th style="width: 85px; min-width: 80px; text-align: center; padding: 8px 4px;">
+                                        <div class="matrix-th-col">
+                                            <span class="matrix-th-badge badge-delete">DELETE</span>
+                                            <label class="matrix-th-chk-wrap" title="Pilih Semua Delete">
+                                                <input type="checkbox" id="role_col_delete" class="crud-header-chk" onchange="toggleMatrixCol('role', 'delete', this.checked)">
+                                            </label>
+                                        </div>
                                     </th>
-                                    <th style="width: 70px; text-align: center;">Semua</th>
+                                    <th style="width: 75px; min-width: 70px; text-align: center; padding: 8px 4px;">
+                                        <div class="matrix-th-col">
+                                            <span class="matrix-th-badge badge-all">SEMUA</span>
+                                            <span class="matrix-th-subtext">Baris</span>
+                                        </div>
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -2667,32 +2792,45 @@ require_once __DIR__ . '/../../includes/header.php';
                         <table class="crud-matrix-table" id="tableMatrixCreate">
                             <thead>
                                 <tr>
-                                    <th style="min-width: 240px; text-align: left;">Modul / Fitur Aplikasi</th>
-                                    <th style="width: 80px; text-align: center;">
-                                        <label class="col-header-chk-label">
-                                            <input type="checkbox" id="create_col_read" onchange="toggleMatrixCol('create', 'read', this.checked)">
-                                            <span>Read</span>
-                                        </label>
+                                    <th style="min-width: 250px; text-align: left; padding: 12px 14px;">Modul / Fitur Aplikasi</th>
+                                    <th style="width: 85px; min-width: 80px; text-align: center; padding: 8px 4px;">
+                                        <div class="matrix-th-col">
+                                            <span class="matrix-th-badge badge-read">READ</span>
+                                            <label class="matrix-th-chk-wrap" title="Pilih Semua Read">
+                                                <input type="checkbox" id="create_col_read" class="crud-header-chk" onchange="toggleMatrixCol('create', 'read', this.checked)">
+                                            </label>
+                                        </div>
                                     </th>
-                                    <th style="width: 80px; text-align: center;">
-                                        <label class="col-header-chk-label">
-                                            <input type="checkbox" id="create_col_create" onchange="toggleMatrixCol('create', 'create', this.checked)">
-                                            <span>Create</span>
-                                        </label>
+                                    <th style="width: 85px; min-width: 80px; text-align: center; padding: 8px 4px;">
+                                        <div class="matrix-th-col">
+                                            <span class="matrix-th-badge badge-create">CREATE</span>
+                                            <label class="matrix-th-chk-wrap" title="Pilih Semua Create">
+                                                <input type="checkbox" id="create_col_create" class="crud-header-chk" onchange="toggleMatrixCol('create', 'create', this.checked)">
+                                            </label>
+                                        </div>
                                     </th>
-                                    <th style="width: 80px; text-align: center;">
-                                        <label class="col-header-chk-label">
-                                            <input type="checkbox" id="create_col_edit" onchange="toggleMatrixCol('create', 'edit', this.checked)">
-                                            <span>Edit</span>
-                                        </label>
+                                    <th style="width: 85px; min-width: 80px; text-align: center; padding: 8px 4px;">
+                                        <div class="matrix-th-col">
+                                            <span class="matrix-th-badge badge-edit">EDIT</span>
+                                            <label class="matrix-th-chk-wrap" title="Pilih Semua Edit">
+                                                <input type="checkbox" id="create_col_edit" class="crud-header-chk" onchange="toggleMatrixCol('create', 'edit', this.checked)">
+                                            </label>
+                                        </div>
                                     </th>
-                                    <th style="width: 80px; text-align: center;">
-                                        <label class="col-header-chk-label">
-                                            <input type="checkbox" id="create_col_delete" onchange="toggleMatrixCol('create', 'delete', this.checked)">
-                                            <span>Delete</span>
-                                        </label>
+                                    <th style="width: 85px; min-width: 80px; text-align: center; padding: 8px 4px;">
+                                        <div class="matrix-th-col">
+                                            <span class="matrix-th-badge badge-delete">DELETE</span>
+                                            <label class="matrix-th-chk-wrap" title="Pilih Semua Delete">
+                                                <input type="checkbox" id="create_col_delete" class="crud-header-chk" onchange="toggleMatrixCol('create', 'delete', this.checked)">
+                                            </label>
+                                        </div>
                                     </th>
-                                    <th style="width: 70px; text-align: center;">Semua</th>
+                                    <th style="width: 75px; min-width: 70px; text-align: center; padding: 8px 4px;">
+                                        <div class="matrix-th-col">
+                                            <span class="matrix-th-badge badge-all">SEMUA</span>
+                                            <span class="matrix-th-subtext">Baris</span>
+                                        </div>
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody>
