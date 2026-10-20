@@ -12,46 +12,153 @@ $pageTitle = 'Manajemen Akses & Pengguna';
 $currentUserId = currentUserId();
 
 // =========================================================================
-// AJAX: AMBIL HAK AKSES USER (JSON)
+// AJAX: AMBIL HAK AKSES USER (JSON DENGAN GRANULAR CRUD MATRIX)
 // =========================================================================
 if (isset($_GET['action']) && $_GET['action'] === 'get_user_permissions') {
     header('Content-Type: application/json');
     $uid = (int)($_GET['user_id'] ?? 0);
-    $stmt = $pdo->prepare("SELECT menu_id FROM user_menu_access WHERE user_id = ?");
-    $stmt->execute([$uid]);
-    $menuIds = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
     // Ambil info user
     $stmtUser = $pdo->prepare("SELECT id, name, username, role FROM users WHERE id = ?");
     $stmtUser->execute([$uid]);
     $user = $stmtUser->fetch(PDO::FETCH_ASSOC);
 
+    // Ambil granular permissions per menu_id
+    $stmt = $pdo->prepare("
+        SELECT menu_id, can_read, can_create, can_edit, can_delete 
+        FROM user_menu_access 
+        WHERE user_id = ?
+    ");
+    $stmt->execute([$uid]);
+    $permissions = [];
+    $menuIds = [];
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $mid = (int)$row['menu_id'];
+        $menuIds[] = $mid;
+        $permissions[$mid] = [
+            'read'   => (int)$row['can_read'],
+            'create' => (int)$row['can_create'],
+            'edit'   => (int)$row['can_edit'],
+            'delete' => (int)$row['can_delete'],
+        ];
+    }
+
+    // Ambil list assigned roles dari user_roles
+    $stmtRoles = $pdo->prepare("
+        SELECT r.id, r.role_key, r.role_name, ur.is_primary
+        FROM user_roles ur
+        JOIN roles r ON r.id = ur.role_id
+        WHERE ur.user_id = ?
+        ORDER BY ur.is_primary DESC, r.id ASC
+    ");
+    $stmtRoles->execute([$uid]);
+    $userRoles = $stmtRoles->fetchAll(PDO::FETCH_ASSOC);
+
     echo json_encode([
         'status' => 'success',
         'user' => $user,
-        'menu_ids' => array_map('intval', $menuIds)
+        'menu_ids' => array_map('intval', $menuIds),
+        'permissions' => $permissions,
+        'roles' => $userRoles
     ]);
     exit;
 }
 
 // =========================================================================
-// AJAX: AMBIL DEFAULT HAK AKSES ROLE (JSON)
+// AJAX: AMBIL DEFAULT HAK AKSES ROLE (JSON DENGAN GRANULAR CRUD MATRIX)
 // =========================================================================
 if (isset($_GET['action']) && $_GET['action'] === 'get_role_permissions') {
     header('Content-Type: application/json');
+    $roleId = (int)($_GET['role_id'] ?? 0);
     $roleKey = trim($_GET['role_key'] ?? '');
-    $stmt = $pdo->prepare("
-        SELECT rma.menu_id 
-        FROM role_menu_access rma 
-        INNER JOIN roles r ON r.id = rma.role_id 
-        WHERE r.role_key = ?
-    ");
-    $stmt->execute([$roleKey]);
-    $menuIds = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+    $roleData = null;
+    if ($roleId > 0) {
+        $stmtR = $pdo->prepare("SELECT id, role_key, role_name, description FROM roles WHERE id = ?");
+        $stmtR->execute([$roleId]);
+        $roleData = $stmtR->fetch(PDO::FETCH_ASSOC);
+        $stmt = $pdo->prepare("
+            SELECT menu_id, can_read, can_create, can_edit, can_delete 
+            FROM role_menu_access 
+            WHERE role_id = ?
+        ");
+        $stmt->execute([$roleId]);
+    } else {
+        $stmtR = $pdo->prepare("SELECT id, role_key, role_name, description FROM roles WHERE role_key = ?");
+        $stmtR->execute([$roleKey]);
+        $roleData = $stmtR->fetch(PDO::FETCH_ASSOC);
+        $stmt = $pdo->prepare("
+            SELECT rma.menu_id, rma.can_read, rma.can_create, rma.can_edit, rma.can_delete 
+            FROM role_menu_access rma 
+            INNER JOIN roles r ON r.id = rma.role_id 
+            WHERE r.role_key = ?
+        ");
+        $stmt->execute([$roleKey]);
+    }
+
+    $permissions = [];
+    $menuIds = [];
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $mid = (int)$row['menu_id'];
+        $menuIds[] = $mid;
+        $permissions[$mid] = [
+            'read'   => (int)$row['can_read'],
+            'create' => (int)$row['can_create'],
+            'edit'   => (int)$row['can_edit'],
+            'delete' => (int)$row['can_delete'],
+        ];
+    }
 
     echo json_encode([
         'status' => 'success',
-        'menu_ids' => array_map('intval', $menuIds)
+        'role' => $roleData,
+        'menu_ids' => array_map('intval', $menuIds),
+        'permissions' => $permissions
+    ]);
+    exit;
+}
+
+// =========================================================================
+// AJAX: AMBIL DATA MULTI-ROLE PENGGUNA (JSON)
+// =========================================================================
+if (isset($_GET['action']) && $_GET['action'] === 'get_user_roles') {
+    header('Content-Type: application/json');
+    $uid = (int)($_GET['user_id'] ?? 0);
+
+    $stmtUser = $pdo->prepare("SELECT id, name, username, role FROM users WHERE id = ?");
+    $stmtUser->execute([$uid]);
+    $user = $stmtUser->fetch(PDO::FETCH_ASSOC);
+
+    // Ambil assigned role IDs
+    $stmtUR = $pdo->prepare("SELECT role_id, is_primary FROM user_roles WHERE user_id = ?");
+    $stmtUR->execute([$uid]);
+    $assignedRoles = $stmtUR->fetchAll(PDO::FETCH_ASSOC);
+
+    $assignedIds = [];
+    $primaryId = 0;
+    foreach ($assignedRoles as $ar) {
+        $rid = (int)$ar['role_id'];
+        $assignedIds[] = $rid;
+        if ((int)$ar['is_primary'] === 1) {
+            $primaryId = $rid;
+        }
+    }
+
+    // Fallback primary role jika di user_roles belum diset
+    if ($primaryId === 0 && !empty($user['role'])) {
+        $stmtFind = $pdo->prepare("SELECT id FROM roles WHERE role_key = ? LIMIT 1");
+        $stmtFind->execute([$user['role']]);
+        $primaryId = (int)$stmtFind->fetchColumn();
+        if ($primaryId > 0 && !in_array($primaryId, $assignedIds, true)) {
+            $assignedIds[] = $primaryId;
+        }
+    }
+
+    echo json_encode([
+        'status' => 'success',
+        'user' => $user,
+        'assigned_role_ids' => $assignedIds,
+        'primary_role_id' => $primaryId
     ]);
     exit;
 }
@@ -62,9 +169,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_role_permissions') {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
-    // 1. SIMPAN HAK AKSES USER TUNGGAL (MANUAL)
+    // 1. SIMPAN HAK AKSES USER TUNGGAL (MANUAL DENGAN 2D CRUD MATRIX)
     if ($action === 'save_user_permissions') {
         $targetUserId = (int)($_POST['target_user_id'] ?? 0);
+        $permData = $_POST['perm'] ?? [];
         $selectedMenuIds = array_map('intval', $_POST['menu_ids'] ?? []);
 
         if ($targetUserId > 0) {
@@ -73,12 +181,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Hapus permission lama
                 $pdo->prepare("DELETE FROM user_menu_access WHERE user_id = ?")->execute([$targetUserId]);
 
-                // Masukkan permission baru
-                if (!empty($selectedMenuIds)) {
-                    $stmtInsert = $pdo->prepare("INSERT INTO user_menu_access (user_id, menu_id) VALUES (?, ?)");
+                $stmtInsert = $pdo->prepare("
+                    INSERT INTO user_menu_access (user_id, menu_id, can_read, can_create, can_edit, can_delete) 
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ");
+
+                if (!empty($permData) && is_array($permData)) {
+                    // Simpan dari 2D CRUD Matrix
+                    foreach ($permData as $menuId => $actions) {
+                        $mId = (int)$menuId;
+                        $r = !empty($actions['read']) ? 1 : 0;
+                        $c = !empty($actions['create']) ? 1 : 0;
+                        $e = !empty($actions['edit']) ? 1 : 0;
+                        $d = !empty($actions['delete']) ? 1 : 0;
+                        // Otomatis aktifkan read jika create/edit/delete aktif
+                        if ($c || $e || $d) {
+                            $r = 1;
+                        }
+                        if ($mId > 0 && ($r || $c || $e || $d)) {
+                            $stmtInsert->execute([$targetUserId, $mId, $r, $c, $e, $d]);
+                        }
+                    }
+                } elseif (!empty($selectedMenuIds)) {
+                    // Fallback backward compatibility
                     foreach ($selectedMenuIds as $mId) {
                         if ($mId > 0) {
-                            $stmtInsert->execute([$targetUserId, $mId]);
+                            $stmtInsert->execute([$targetUserId, $mId, 1, 0, 0, 0]);
                         }
                     }
                 }
@@ -86,13 +214,73 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->commit();
                 refreshUserPermissions($pdo, $targetUserId);
                 if (function_exists('recordActivityAudit')) {
-                    recordActivityAudit($pdo, 'access_control', 'UPDATE', 'user_menu_access', $targetUserId, "Perbarui Hak Akses Menu Pengguna #{$targetUserId}");
+                    recordActivityAudit($pdo, 'access_control', 'UPDATE', 'user_menu_access', $targetUserId, "Perbarui Matriks Hak Akses (CRUD) Pengguna #{$targetUserId}");
                 }
-                flash('success', 'Hak akses pengguna berhasil diperbarui!');
+                flash('success', 'Matriks hak akses (CRUD) pengguna berhasil diperbarui!');
             } catch (Exception $e) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
                 flash('error', 'Gagal menyimpan hak akses: ' . $e->getMessage());
             }
+        }
+        redirect('index.php?tab=users');
+    }
+
+    // 1B. SIMPAN MULTI-ROLE PENGGUNA
+    if ($action === 'save_user_roles') {
+        $uid = (int)($_POST['user_id'] ?? 0);
+        $selectedRoleIds = array_map('intval', $_POST['role_ids'] ?? []);
+        $primaryRoleId = (int)($_POST['primary_role_id'] ?? 0);
+
+        if ($uid <= 0 || empty($selectedRoleIds)) {
+            flash('error', 'Pilih minimal satu role untuk pengguna.');
+            redirect('index.php?tab=users');
+        }
+
+        if (!in_array($primaryRoleId, $selectedRoleIds, true)) {
+            $primaryRoleId = $selectedRoleIds[0];
+        }
+
+        // Ambil role_key dari primary role
+        $stmtP = $pdo->prepare("SELECT role_key FROM roles WHERE id = ?");
+        $stmtP->execute([$primaryRoleId]);
+        $primaryRoleKey = $stmtP->fetchColumn() ?: 'staff';
+
+        // Proteksi: cegah Super Admin mendemote dirinya sendiri
+        if ($uid === $currentUserId && $primaryRoleKey !== 'super_admin') {
+            $stmtSA = $pdo->query("SELECT id FROM roles WHERE role_key = 'super_admin' LIMIT 1");
+            $saId = (int)$stmtSA->fetchColumn();
+            if (!in_array($saId, $selectedRoleIds, true)) {
+                flash('error', 'Anda tidak dapat menghapus wewenang Super Admin dari akun Anda sendiri.');
+                redirect('index.php?tab=users');
+            }
+        }
+
+        $pdo->beginTransaction();
+        try {
+            // Update users.role dengan primary role
+            $stmtUpdUser = $pdo->prepare("UPDATE users SET role = ? WHERE id = ?");
+            $stmtUpdUser->execute([$primaryRoleKey, $uid]);
+
+            // Re-sync user_roles
+            $pdo->prepare("DELETE FROM user_roles WHERE user_id = ?")->execute([$uid]);
+            $stmtInsertUR = $pdo->prepare("
+                INSERT INTO user_roles (user_id, role_id, is_primary) 
+                VALUES (?, ?, ?)
+            ");
+            foreach ($selectedRoleIds as $rid) {
+                $isPri = ($rid === $primaryRoleId) ? 1 : 0;
+                $stmtInsertUR->execute([$uid, $rid, $isPri]);
+            }
+
+            $pdo->commit();
+            refreshUserPermissions($pdo, $uid);
+            if (function_exists('recordActivityAudit')) {
+                recordActivityAudit($pdo, 'access_control', 'UPDATE', 'user_roles', $uid, "Perbarui Multi-Role Pengguna #{$uid}: Primary {$primaryRoleKey}");
+            }
+            flash('success', 'Multi-role pengguna berhasil diperbarui!');
+        } catch (Exception $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            flash('error', 'Gagal memperbarui multi-role: ' . $e->getMessage());
         }
         redirect('index.php?tab=users');
     }
@@ -559,8 +747,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt->execute([$roleName, $roleKey, $desc]);
                     $newRoleId = (int)$pdo->lastInsertId();
 
-                    if (!empty($selectedMenuIds)) {
-                        $stmtRma = $pdo->prepare("INSERT INTO role_menu_access (role_id, menu_id) VALUES (?, ?)");
+                    $permData = $_POST['perm'] ?? [];
+                    if (!empty($permData) && is_array($permData)) {
+                        $stmtRma = $pdo->prepare("INSERT INTO role_menu_access (role_id, menu_id, can_read, can_create, can_edit, can_delete) VALUES (?, ?, ?, ?, ?, ?)");
+                        foreach ($permData as $menuId => $actions) {
+                            $mId = (int)$menuId;
+                            $r = !empty($actions['read']) ? 1 : 0;
+                            $c = !empty($actions['create']) ? 1 : 0;
+                            $e = !empty($actions['edit']) ? 1 : 0;
+                            $d = !empty($actions['delete']) ? 1 : 0;
+                            if ($c || $e || $d) $r = 1;
+                            if ($mId > 0 && ($r || $c || $e || $d)) {
+                                $stmtRma->execute([$newRoleId, $mId, $r, $c, $e, $d]);
+                            }
+                        }
+                    } elseif (!empty($selectedMenuIds)) {
+                        $stmtRma = $pdo->prepare("INSERT INTO role_menu_access (role_id, menu_id, can_read, can_create, can_edit, can_delete) VALUES (?, ?, 1, 0, 0, 0)");
                         foreach ($selectedMenuIds as $mid) {
                             if ($mid > 0) $stmtRma->execute([$newRoleId, $mid]);
                         }
@@ -596,23 +798,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('index.php?tab=roles');
     }
 
-    // 12. UPDATE DEFAULT ROLE MENU PERMISSIONS
+    // 12. UPDATE DEFAULT ROLE MENU PERMISSIONS (DENGAN 2D CRUD MATRIX)
     if ($action === 'save_role_permissions') {
         $roleId = (int)($_POST['role_id'] ?? 0);
+        $permData = $_POST['perm'] ?? [];
         $selectedMenuIds = array_map('intval', $_POST['menu_ids'] ?? []);
 
         if ($roleId > 0) {
             $pdo->beginTransaction();
             try {
                 $pdo->prepare("DELETE FROM role_menu_access WHERE role_id = ?")->execute([$roleId]);
-                if (!empty($selectedMenuIds)) {
-                    $stmtRma = $pdo->prepare("INSERT INTO role_menu_access (role_id, menu_id) VALUES (?, ?)");
+                $stmtRma = $pdo->prepare("
+                    INSERT INTO role_menu_access (role_id, menu_id, can_read, can_create, can_edit, can_delete) 
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ");
+
+                if (!empty($permData) && is_array($permData)) {
+                    foreach ($permData as $menuId => $actions) {
+                        $mId = (int)$menuId;
+                        $r = !empty($actions['read']) ? 1 : 0;
+                        $c = !empty($actions['create']) ? 1 : 0;
+                        $e = !empty($actions['edit']) ? 1 : 0;
+                        $d = !empty($actions['delete']) ? 1 : 0;
+                        if ($c || $e || $d) {
+                            $r = 1;
+                        }
+                        if ($mId > 0 && ($r || $c || $e || $d)) {
+                            $stmtRma->execute([$roleId, $mId, $r, $c, $e, $d]);
+                        }
+                    }
+                } elseif (!empty($selectedMenuIds)) {
                     foreach ($selectedMenuIds as $mid) {
-                        if ($mid > 0) $stmtRma->execute([$roleId, $mid]);
+                        if ($mid > 0) {
+                            $stmtRma->execute([$roleId, $mid, 1, 0, 0, 0]);
+                        }
                     }
                 }
+
                 $pdo->commit();
-                flash('success', 'Default hak akses role berhasil diperbarui!');
+                if (function_exists('recordActivityAudit')) {
+                    recordActivityAudit($pdo, 'access_control', 'UPDATE', 'role_menu_access', $roleId, "Perbarui Default Matriks CRUD Role #{$roleId}");
+                }
+                flash('success', 'Default matriks hak akses role (CRUD) berhasil diperbarui!');
             } catch (Exception $e) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
                 flash('error', 'Gagal menyimpan: ' . $e->getMessage());
@@ -633,8 +860,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($rData['is_system'] == 1) {
             flash('error', 'Role sistem tidak dapat dihapus.');
         } else {
-            $stmtCount = $pdo->prepare("SELECT COUNT(*) FROM users WHERE role = ?");
-            $stmtCount->execute([$rData['role_key']]);
+            $stmtCount = $pdo->prepare("
+                SELECT (
+                    (SELECT COUNT(*) FROM users WHERE role = ?) + 
+                    (SELECT COUNT(*) FROM user_roles WHERE role_id = ?)
+                ) as total
+            ");
+            $stmtCount->execute([$rData['role_key'], $roleId]);
             $countUsers = (int)$stmtCount->fetchColumn();
 
             if ($countUsers > 0) {
@@ -684,14 +916,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // =========================================================================
 $activeTab = $_GET['tab'] ?? 'users';
 
-// 1. Ambil Semua Role
+// 1. Ambil Semua Role (Lengkap dengan Breakdown CRUD Permissions)
 $roles = $pdo->query("
     SELECT r.*, 
-           (SELECT COUNT(*) FROM users u WHERE u.role COLLATE utf8mb4_general_ci = r.role_key AND u.deleted_at IS NULL) as total_users,
-           (SELECT COUNT(*) FROM role_menu_access rma WHERE rma.role_id = r.id) as total_menus
+           (
+               SELECT COUNT(DISTINCT u.id) 
+               FROM users u 
+               LEFT JOIN user_roles ur ON ur.user_id = u.id AND ur.role_id = r.id
+               WHERE (u.role COLLATE utf8mb4_general_ci = r.role_key OR ur.role_id IS NOT NULL) 
+                 AND u.deleted_at IS NULL
+           ) as total_users,
+           (SELECT COUNT(*) FROM role_menu_access rma WHERE rma.role_id = r.id) as total_menus,
+           (SELECT COUNT(*) FROM role_menu_access rma WHERE rma.role_id = r.id AND rma.can_read = 1) as total_read,
+           (SELECT COUNT(*) FROM role_menu_access rma WHERE rma.role_id = r.id AND rma.can_create = 1) as total_create,
+           (SELECT COUNT(*) FROM role_menu_access rma WHERE rma.role_id = r.id AND rma.can_edit = 1) as total_edit,
+           (SELECT COUNT(*) FROM role_menu_access rma WHERE rma.role_id = r.id AND rma.can_delete = 1) as total_delete
     FROM roles r 
     ORDER BY r.is_system DESC, r.role_name ASC
 ")->fetchAll(PDO::FETCH_ASSOC);
+
+// Map Multi-Role untuk setiap User
+$userRolesMap = [];
+$stmtAllUR = $pdo->query("
+    SELECT ur.user_id, r.id as role_id, r.role_key, r.role_name, ur.is_primary
+    FROM user_roles ur
+    INNER JOIN roles r ON r.id = ur.role_id
+    ORDER BY ur.is_primary DESC, r.id ASC
+");
+while ($rRow = $stmtAllUR->fetch(PDO::FETCH_ASSOC)) {
+    $uid = (int)$rRow['user_id'];
+    if (!isset($userRolesMap[$uid])) {
+        $userRolesMap[$uid] = [];
+    }
+    $userRolesMap[$uid][] = $rRow;
+}
 
 // 2. Statistik User per Role (untuk Filter Bar)
 $stmtCounts = $pdo->query("
@@ -838,6 +1096,176 @@ require_once __DIR__ . '/../../includes/header.php';
     background: var(--primary, #4f46e5);
     color: #ffffff;
     border-color: var(--primary, #4f46e5);
+}
+
+/* =========================================================================
+   2D CRUD MATRIX & MULTI-ROLE ADVANCED STYLING
+   ========================================================================= */
+.crud-matrix-wrapper {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+.crud-matrix-toolbar {
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    padding: 10px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.crud-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.crud-toolbar-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.crud-table-scroll {
+    max-height: 52vh;
+    overflow-y: auto;
+}
+.crud-matrix-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+.crud-matrix-table thead th {
+    position: sticky;
+    top: 0;
+    background: #f1f5f9;
+    color: #475569;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 10px 12px;
+    border-bottom: 2px solid #cbd5e1;
+    z-index: 10;
+}
+.crud-cat-header-row td {
+    background: #f8fafc;
+    padding: 8px 14px;
+    border-top: 1px solid #e2e8f0;
+    border-bottom: 1px solid #e2e8f0;
+}
+.crud-cat-title {
+    font-weight: 700;
+    font-size: 11.5px;
+    color: #334155;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.crud-row td {
+    padding: 9px 12px;
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: middle;
+}
+.crud-row:hover {
+    background: #f8fafc;
+}
+.crud-chk {
+    width: 17px;
+    height: 17px;
+    cursor: pointer;
+    accent-color: var(--primary, #4f46e5);
+}
+.crud-row-all {
+    width: 17px;
+    height: 17px;
+    cursor: pointer;
+    accent-color: #0284c7;
+}
+.col-header-chk-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    user-select: none;
+    font-weight: 700;
+    font-size: 11.5px;
+}
+.badge-crud-pill {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    margin: 1px;
+}
+.badge-crud-read { background: #e0f2fe; color: #0369a1; }
+.badge-crud-create { background: #dcfce7; color: #15803d; }
+.badge-crud-edit { background: #fef3c7; color: #b45309; }
+.badge-crud-delete { background: #fee2e2; color: #b91c1c; }
+
+/* Multi-Role Badges in Users Table */
+.multi-role-badges {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+}
+.role-badge-secondary {
+    font-size: 10.5px;
+    padding: 2px 7px;
+    border-radius: 12px;
+    background: #f1f5f9;
+    color: #475569;
+    border: 1px solid #cbd5e1;
+    font-weight: 600;
+}
+.multi-role-option-card {
+    background: #ffffff;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 12px 14px;
+    transition: all 0.2s;
+}
+.multi-role-option-card:hover {
+    border-color: #cbd5e1;
+    background: #f8fafc;
+}
+.multi-role-option-card.active {
+    border-color: var(--primary, #4f46e5);
+    background: rgba(79, 70, 229, 0.03);
+}
+.primary-radio-label {
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+    margin: 0;
+}
+.multi-role-primary-radio {
+    display: none;
+}
+.primary-radio-pill {
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    background: #f1f5f9;
+    color: #64748b;
+    border: 1px solid #cbd5e1;
+    transition: all 0.15s;
+    user-select: none;
+}
+.multi-role-primary-radio:checked + .primary-radio-pill {
+    background: #10b981;
+    color: #ffffff;
+    border-color: #10b981;
+    box-shadow: 0 2px 4px rgba(16, 185, 129, 0.2);
 }
 
 /* Category Cards for Checkbox Grid */
@@ -1157,17 +1585,27 @@ require_once __DIR__ . '/../../includes/header.php';
                                 <code><?= htmlspecialchars($u['username']) ?></code>
                             </td>
                             <td style="padding: 12px 14px;">
-                                <div style="display: inline-flex; align-items: center; gap: 6px;">
+                                <?php
+                                    $assigned = $userRolesMap[$u['id']] ?? [];
+                                ?>
+                                <div class="multi-role-badges">
                                     <span class="role-badge <?= $badgeClass ?>">
                                         <i class="fa-solid fa-circle-dot" style="font-size: 8px;"></i>
                                         <?= htmlspecialchars($roleLabel) ?>
                                     </span>
-                                    <!-- QUICK ROLE SWITCHER BUTTON -->
+                                    <?php foreach ($assigned as $aRole): ?>
+                                        <?php if ((int)$aRole['is_primary'] !== 1 && $aRole['role_key'] !== $u['role']): ?>
+                                            <span class="role-badge-secondary" title="Role Tambahan">
+                                                + <?= htmlspecialchars($aRole['role_name']) ?>
+                                            </span>
+                                        <?php endif; ?>
+                                    <?php endforeach; ?>
+                                    <!-- TOMBOL ATUR MULTI-ROLE -->
                                     <button type="button" class="btn btn-sm btn-secondary" 
-                                            onclick="openQuickChangeRoleModal(<?= $u['id'] ?>, '<?= htmlspecialchars(addslashes($u['name'])) ?>', '<?= htmlspecialchars(addslashes($u['username'])) ?>', '<?= $u['role'] ?>')"
-                                            style="padding: 2px 7px; font-size: 11px; border-radius: 12px;"
-                                            title="Ubah role pengguna ini secara instan">
-                                        <i class="fa-solid fa-pen-to-square"></i> Ubah
+                                            onclick="openMultiRoleModal(<?= $u['id'] ?>, '<?= htmlspecialchars(addslashes($u['name'])) ?>', '<?= htmlspecialchars(addslashes($u['username'])) ?>')"
+                                            style="padding: 2px 7px; font-size: 11px; border-radius: 12px; margin-left: 2px;"
+                                            title="Atur Role & Multi-Role Pengguna">
+                                        <i class="fa-solid fa-users-gear"></i>
                                     </button>
                                 </div>
                             </td>
@@ -1251,6 +1689,20 @@ require_once __DIR__ . '/../../includes/header.php';
         <!-- ============================================================= -->
         <!-- TAB 2: MASTER ROLE -->
         <!-- ============================================================= -->
+        <div style="margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <div>
+                <h3 style="margin: 0; font-size: 16px; color: #1e293b; font-weight: 700;">
+                    <i class="fa-solid fa-shield-halved" style="color: var(--primary);"></i> Master Role & Matriks Default Akses
+                </h3>
+                <div style="font-size: 12px; color: #64748b; margin-top: 2px;">
+                    Role dinamis memungkinkan pembuatan peran baru dengan kombinasi hak akses CRUD (Read, Create, Edit, Delete).
+                </div>
+            </div>
+            <button type="button" class="btn btn-primary" onclick="openModal('modalCreateRole')" style="display: inline-flex; align-items: center; gap: 8px;">
+                <i class="fa-solid fa-plus-circle"></i> Buat Role Baru
+            </button>
+        </div>
+
         <div class="table-container" style="overflow-x: auto;">
             <table class="table" style="width: 100%; border-collapse: collapse;">
                 <thead>
@@ -1287,18 +1739,28 @@ require_once __DIR__ . '/../../includes/header.php';
                             </td>
                             <td style="padding: 12px 14px; text-align: center;">
                                 <?php if ($r['role_key'] === 'super_admin'): ?>
-                                    <span style="color: #6d28d9; font-weight: bold;">Semua</span>
-                                <?php else: ?>
-                                    <span style="background: #ede9fe; color: var(--primary); padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">
-                                        <?= (int)$r['total_menus'] ?> menu
+                                    <span style="background: #ede9fe; color: #6d28d9; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+                                        <i class="fa-solid fa-bolt"></i> Full Akses (Semua CRUD)
                                     </span>
+                                <?php else: ?>
+                                    <div style="display: inline-flex; flex-direction: column; gap: 4px; align-items: center;">
+                                        <span style="background: #ede9fe; color: var(--primary); padding: 3px 8px; border-radius: 10px; font-size: 11.5px; font-weight: bold;">
+                                            <?= (int)$r['total_menus'] ?> menu
+                                        </span>
+                                        <div style="display: flex; gap: 2px;">
+                                            <span class="badge-crud-pill badge-crud-read" title="Izin Read: <?= (int)$r['total_read'] ?> menu">R:<?= (int)$r['total_read'] ?></span>
+                                            <span class="badge-crud-pill badge-crud-create" title="Izin Create: <?= (int)$r['total_create'] ?> menu">C:<?= (int)$r['total_create'] ?></span>
+                                            <span class="badge-crud-pill badge-crud-edit" title="Izin Edit: <?= (int)$r['total_edit'] ?> menu">E:<?= (int)$r['total_edit'] ?></span>
+                                            <span class="badge-crud-pill badge-crud-delete" title="Izin Delete: <?= (int)$r['total_delete'] ?> menu">D:<?= (int)$r['total_delete'] ?></span>
+                                        </div>
+                                    </div>
                                 <?php endif; ?>
                             </td>
                             <td style="padding: 12px 14px; text-align: right;">
                                 <div style="display: inline-flex; gap: 6px;">
                                     <?php if ($r['role_key'] !== 'super_admin'): ?>
                                         <button type="button" class="btn btn-sm btn-primary" onclick="openRolePermissionsModal(<?= $r['id'] ?>, '<?= htmlspecialchars(addslashes($r['role_name'])) ?>', '<?= htmlspecialchars(addslashes($r['role_key'])) ?>')">
-                                            <i class="fa-solid fa-list-check"></i> Atur Default Menu
+                                            <i class="fa-solid fa-table-cells"></i> Atur Matriks CRUD
                                         </button>
                                     <?php endif; ?>
 
@@ -1646,16 +2108,98 @@ require_once __DIR__ . '/../../includes/header.php';
 <!-- ========================================================================= -->
 <!-- MODAL: ATUR HAK AKSES PENGGUNA MANUAL (CHECKBOX UI) -->
 <!-- ========================================================================= -->
-<div id="modalUserPermissions" class="custom-modal-overlay">
-    <div class="custom-modal-box">
+<!-- MODAL: KELOLA MULTI-ROLE PENGGUNA -->
+<!-- ========================================================================= -->
+<div id="modalMultiRole" class="custom-modal-overlay">
+    <div class="custom-modal-box" style="max-width: 660px;">
         <div class="custom-modal-header">
             <div>
                 <h3 style="margin: 0; font-size: 18px; color: #0f172a;">
-                    <i class="fa-solid fa-sliders" style="color: var(--primary); margin-right: 8px;"></i>
-                    Atur Hak Akses: <span id="modalTargetUserName" style="color: var(--primary);">Loading...</span>
+                    <i class="fa-solid fa-users-gear" style="color: var(--primary); margin-right: 8px;"></i>
+                    Kelola Role & Multi-Role: <span id="multiRoleUserName" style="color: var(--primary);">-</span>
                 </h3>
                 <div style="font-size: 12px; color: #64748b; margin-top: 4px;">
-                    Role: <strong id="modalTargetUserRole">-</strong> &bull; Centang menu yang diizinkan untuk pengguna ini secara spesifik.
+                    Username: <code id="multiRoleUserUsername">-</code> &bull; Tetapkan satu atau beberapa peran sekaligus untuk pengguna ini.
+                </div>
+            </div>
+            <button type="button" class="btn-close-sidebar" style="position: static;" onclick="closeModal('modalMultiRole')">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+
+        <form method="POST">
+            <input type="hidden" name="action" value="save_user_roles">
+            <input type="hidden" name="user_id" id="multiRoleUserId" value="">
+
+            <div class="custom-modal-body">
+                <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 12px 16px; margin-bottom: 18px;">
+                    <div style="font-weight: 700; color: #1e40af; font-size: 13px; margin-bottom: 4px;">
+                        <i class="fa-solid fa-shield-halved"></i> Prinsip Multi-Role (Additive Union)
+                    </div>
+                    <div style="font-size: 12px; color: #1e3a8a; line-height: 1.5;">
+                        Pengguna akan memiliki akumulasi hak akses dari <strong>seluruh role</strong> yang dicentang. Hak akses menu dan wewenang CRUD akan digabung secara otomatis. Tentukan salah satu sebagai <strong>Role Utama</strong> untuk identitas tampilan.
+                    </div>
+                </div>
+
+                <div style="margin-bottom: 12px; font-weight: 700; color: #334155; font-size: 14px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>Pilih Role yang Ditugaskan:</span>
+                    <span style="font-size: 11.5px; font-weight: 600; color: #64748b;">Tandai "Utama" di sebelah kanan</span>
+                </div>
+
+                <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px;">
+                    <?php foreach ($roles as $r): ?>
+                        <div class="multi-role-option-card" id="role_card_<?= $r['id'] ?>">
+                            <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                                <label style="display: flex; align-items: center; gap: 12px; cursor: pointer; flex: 1; margin: 0;">
+                                    <input type="checkbox" name="role_ids[]" value="<?= $r['id'] ?>" class="multi-role-chk" id="mr_chk_<?= $r['id'] ?>" onchange="onMultiRoleCheckChange(<?= $r['id'] ?>)">
+                                    <div>
+                                        <div style="font-weight: 700; font-size: 13.5px; color: #1e293b;">
+                                            <?= htmlspecialchars($r['role_name']) ?>
+                                            <code>(<?= htmlspecialchars($r['role_key']) ?>)</code>
+                                            <?php if ($r['is_system'] == 1): ?>
+                                                <span style="font-size: 10px; background: #e2e8f0; color: #475569; padding: 2px 6px; border-radius: 6px; margin-left: 4px;">SISTEM</span>
+                                            <?php endif; ?>
+                                        </div>
+                                        <div style="font-size: 11.5px; color: #64748b;">
+                                            <?= htmlspecialchars($r['description'] ?? 'Tidak ada keterangan') ?>
+                                        </div>
+                                    </div>
+                                </label>
+                                <div style="display: flex; align-items: center; gap: 6px;">
+                                    <label class="primary-radio-label" title="Jadikan role ini sebagai Role Utama pengguna">
+                                        <input type="radio" name="primary_role_id" value="<?= $r['id'] ?>" class="multi-role-primary-radio" id="mr_radio_<?= $r['id'] ?>" onchange="onPrimaryRadioChange(<?= $r['id'] ?>)">
+                                        <span class="primary-radio-pill"><i class="fa-solid fa-star"></i> Utama</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+
+            <div class="custom-modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modalMultiRole')">Batal</button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fa-solid fa-floppy-disk"></i> Simpan Multi-Role
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ========================================================================= -->
+<!-- MODAL: ATUR HAK AKSES PENGGUNA MANUAL (2D CRUD MATRIX) -->
+<!-- ========================================================================= -->
+<div id="modalUserPermissions" class="custom-modal-overlay">
+    <div class="custom-modal-box" style="max-width: 960px;">
+        <div class="custom-modal-header">
+            <div>
+                <h3 style="margin: 0; font-size: 18px; color: #0f172a;">
+                    <i class="fa-solid fa-table-cells" style="color: var(--primary); margin-right: 8px;"></i>
+                    Matriks Hak Akses: <span id="modalTargetUserName" style="color: var(--primary);">Loading...</span>
+                </h3>
+                <div style="font-size: 12px; color: #64748b; margin-top: 4px;">
+                    Role: <strong id="modalTargetUserRole">-</strong> &bull; Atur wewenang granular per menu: <strong>Read (Lihat)</strong>, <strong>Create (Tambah)</strong>, <strong>Edit (Ubah)</strong>, <strong>Delete (Hapus)</strong>.
                 </div>
             </div>
             <button type="button" class="btn-close-sidebar" style="position: static;" onclick="closeModal('modalUserPermissions')">
@@ -1668,78 +2212,130 @@ require_once __DIR__ . '/../../includes/header.php';
             <input type="hidden" name="target_user_id" id="targetUserIdInput" value="">
 
             <div class="custom-modal-body">
-                <!-- TOOLBAR AKSI CEPAT -->
-                <div style="background: #f1f5f9; padding: 12px 16px; border-radius: 10px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                        <button type="button" class="btn btn-sm btn-secondary" onclick="toggleAllCheckboxes(true)">
-                            <i class="fa-solid fa-check-double"></i> Pilih Semua
-                        </button>
-                        <button type="button" class="btn btn-sm btn-secondary" onclick="toggleAllCheckboxes(false)">
-                            <i class="fa-solid fa-xmark"></i> Kosongkan
-                        </button>
-                        <div style="position: relative;">
-                            <input type="text" id="searchMenuInput" placeholder="Cari nama / kode menu..." onkeyup="filterMenuCheckboxes()" style="padding: 6px 12px 6px 28px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 12px; width: 180px;">
-                            <i class="fa-solid fa-magnifying-glass" style="position: absolute; left: 9px; top: 9px; color: #94a3b8; font-size: 11px;"></i>
+                <div class="crud-matrix-wrapper">
+                    <!-- TOOLBAR AKSI PRESET & PENCARIAN -->
+                    <div class="crud-matrix-toolbar">
+                        <div class="crud-toolbar-actions">
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="applyMatrixPreset('user', 'full')" title="Beri akses penuh (Read, Create, Edit, Delete) ke seluruh menu">
+                                <i class="fa-solid fa-check-double" style="color: #10b981;"></i> Pilih Semua (Full CRUD)
+                            </button>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="applyMatrixPreset('user', 'readonly')" title="Beri izin Read saja ke semua menu">
+                                <i class="fa-solid fa-eye" style="color: #0284c7;"></i> Hanya Lihat (View Only)
+                            </button>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="applyMatrixPreset('user', 'empty')" title="Kosongkan seluruh izin">
+                                <i class="fa-solid fa-xmark" style="color: #ef4444;"></i> Kosongkan
+                            </button>
                         </div>
-                    </div>
-                    <div style="display: flex; gap: 8px; align-items: center;">
-                        <span style="font-size: 12px; color: #475569; font-weight: 600;">Gunakan Template Role:</span>
-                        <select id="roleTemplateSelector" style="padding: 5px 10px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 12px;" onchange="applyRoleTemplate(this.value)">
-                            <option value="">-- Pilih Role --</option>
-                            <?php foreach ($roles as $r): ?>
-                                <?php if ($r['role_key'] !== 'super_admin'): ?>
-                                    <option value="<?= htmlspecialchars($r['role_key']) ?>"><?= htmlspecialchars($r['role_name']) ?></option>
-                                <?php endif; ?>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                </div>
-
-                <!-- DAFTAR MENU BERDASARKAN KATEGORI -->
-                <div id="userMenuCheckboxesContainer">
-                    <?php foreach ($menusByCategory as $category => $items): ?>
-                        <div class="category-card" data-category="<?= htmlspecialchars($category) ?>">
-                            <div class="category-header" style="display: flex; justify-content: space-between; align-items: center;">
-                                <span class="category-title">
-                                    <i class="fa-solid fa-folder"></i> <?= htmlspecialchars($category) ?>
-                                </span>
-                                <label style="font-size: 11.5px; color: #0284c7; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; margin: 0;">
-                                    <input type="checkbox" class="cat-select-all" onchange="toggleCategoryCheckboxes(this)" style="cursor: pointer;">
-                                    <span>Pilih Semua (<?= count($items) ?>)</span>
-                                </label>
+                        <div class="crud-toolbar-search">
+                            <div style="position: relative;">
+                                <input type="text" id="searchMenuInputUser" placeholder="Cari modul / menu..." onkeyup="filterMatrixRows('user', this.value)" style="padding: 6px 12px 6px 28px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 12px; width: 170px;">
+                                <i class="fa-solid fa-magnifying-glass" style="position: absolute; left: 9px; top: 9px; color: #94a3b8; font-size: 11px;"></i>
                             </div>
-                            <div class="menu-grid">
-                                <?php foreach ($items as $m): ?>
-                                    <?php
-                                        $icon = !empty($m['menu_icon']) ? $m['menu_icon'] : 'fa-circle';
-                                        if (strpos($icon, 'fa-') !== false && strpos($icon, 'fa-solid ') === false) {
-                                            $icon = 'fa-solid ' . $icon;
-                                        }
-                                        $isOtMenu = ($m['menu_key'] === 'reports_overtimes');
-                                    ?>
-                                    <label class="menu-checkbox-item" data-menuname="<?= htmlspecialchars(strtolower($m['menu_name'])) ?>" data-menukey="<?= htmlspecialchars(strtolower($m['menu_key'])) ?>" <?= $isOtMenu ? 'style="border: 1.5px solid #f59e0b; background: #fffbeb;"' : '' ?>>
-                                        <input type="checkbox" name="menu_ids[]" value="<?= $m['id'] ?>" class="user-menu-chk" id="chk_user_<?= $m['id'] ?>" onchange="syncCategoryCheckboxes()">
-                                        <span class="menu-checkbox-label" style="flex: 1; display: flex; align-items: center; justify-content: space-between;">
-                                            <span style="display: flex; align-items: center; gap: 6px;">
-                                                <i class="<?= htmlspecialchars($icon) ?>" style="color: <?= $isOtMenu ? '#d97706' : 'var(--primary)' ?>; width: 16px; text-align: center;"></i>
-                                                <?= htmlspecialchars($m['menu_name']) ?>
-                                            </span>
-                                            <?php if ($isOtMenu): ?>
-                                                <span style="font-size: 10px; background: #fef3c7; color: #b45309; padding: 2px 6px; border-radius: 4px; font-weight: 700; border: 1px solid #fde68a; margin-left: 6px;">⭐ HRD / Jam Lembur</span>
-                                            <?php endif; ?>
-                                        </span>
-                                    </label>
+                            <select id="roleTemplateSelector" style="padding: 5px 10px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 12px;" onchange="applyRoleTemplateToMatrix(this.value)">
+                                <option value="">-- Template Role --</option>
+                                <?php foreach ($roles as $r): ?>
+                                    <?php if ($r['role_key'] !== 'super_admin'): ?>
+                                        <option value="<?= htmlspecialchars($r['role_key']) ?>"><?= htmlspecialchars($r['role_name']) ?></option>
+                                    <?php endif; ?>
                                 <?php endforeach; ?>
-                            </div>
+                            </select>
                         </div>
-                    <?php endforeach; ?>
+                    </div>
+
+                    <!-- TABEL MATRIKS CRUD -->
+                    <div class="crud-table-scroll">
+                        <table class="crud-matrix-table" id="tableMatrixUser">
+                            <thead>
+                                <tr>
+                                    <th style="min-width: 240px; text-align: left;">Modul / Fitur Aplikasi</th>
+                                    <th style="width: 80px; text-align: center;">
+                                        <label class="col-header-chk-label" title="Centang Read untuk semua menu">
+                                            <input type="checkbox" id="user_col_read" onchange="toggleMatrixCol('user', 'read', this.checked)">
+                                            <span>Read</span>
+                                        </label>
+                                    </th>
+                                    <th style="width: 80px; text-align: center;">
+                                        <label class="col-header-chk-label" title="Centang Create untuk semua menu">
+                                            <input type="checkbox" id="user_col_create" onchange="toggleMatrixCol('user', 'create', this.checked)">
+                                            <span>Create</span>
+                                        </label>
+                                    </th>
+                                    <th style="width: 80px; text-align: center;">
+                                        <label class="col-header-chk-label" title="Centang Edit untuk semua menu">
+                                            <input type="checkbox" id="user_col_edit" onchange="toggleMatrixCol('user', 'edit', this.checked)">
+                                            <span>Edit</span>
+                                        </label>
+                                    </th>
+                                    <th style="width: 80px; text-align: center;">
+                                        <label class="col-header-chk-label" title="Centang Delete untuk semua menu">
+                                            <input type="checkbox" id="user_col_delete" onchange="toggleMatrixCol('user', 'delete', this.checked)">
+                                            <span>Delete</span>
+                                        </label>
+                                    </th>
+                                    <th style="width: 70px; text-align: center;">Semua</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($menusByCategory as $category => $items): ?>
+                                    <tr class="crud-cat-header-row user-cat-row" data-cat="<?= htmlspecialchars($category) ?>">
+                                        <td colspan="6">
+                                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                                <span class="crud-cat-title"><i class="fa-solid fa-folder"></i> <?= htmlspecialchars($category) ?></span>
+                                                <span style="font-size: 11px; color: #64748b; font-weight: 600;"><?= count($items) ?> menu</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    <?php foreach ($items as $m): ?>
+                                        <?php
+                                            $icon = !empty($m['menu_icon']) ? $m['menu_icon'] : 'fa-circle';
+                                            if (strpos($icon, 'fa-') !== false && strpos($icon, 'fa-solid ') === false) {
+                                                $icon = 'fa-solid ' . $icon;
+                                            }
+                                            $isOtMenu = ($m['menu_key'] === 'reports_overtimes');
+                                        ?>
+                                        <tr class="crud-row user-crud-row" data-menuid="<?= $m['id'] ?>" data-name="<?= htmlspecialchars(strtolower($m['menu_name'])) ?>" data-key="<?= htmlspecialchars(strtolower($m['menu_key'])) ?>" data-cat="<?= htmlspecialchars($category) ?>" <?= $isOtMenu ? 'style="background: #fffbeb;"' : '' ?>>
+                                            <td>
+                                                <div style="display: flex; align-items: center; gap: 10px;">
+                                                    <i class="<?= htmlspecialchars($icon) ?>" style="color: <?= $isOtMenu ? '#d97706' : 'var(--primary)' ?>; width: 18px; text-align: center; font-size: 15px;"></i>
+                                                    <div>
+                                                        <div style="font-weight: 600; color: #1e293b; font-size: 13.5px;">
+                                                            <?= htmlspecialchars($m['menu_name']) ?>
+                                                            <?php if ($isOtMenu): ?>
+                                                                <span style="font-size: 10px; background: #fef3c7; color: #b45309; padding: 2px 6px; border-radius: 4px; font-weight: 700; border: 1px solid #fde68a; margin-left: 4px;">⭐ HRD / Lembur</span>
+                                                            <?php endif; ?>
+                                                        </div>
+                                                        <div style="font-size: 11px; color: #94a3b8;"><code><?= htmlspecialchars($m['menu_key']) ?></code></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td style="text-align: center;">
+                                                <input type="checkbox" name="perm[<?= $m['id'] ?>][read]" value="1" class="crud-chk user-chk-read" id="user_perm_<?= $m['id'] ?>_read" onchange="onCrudCheckboxChange('user', <?= $m['id'] ?>, 'read')">
+                                            </td>
+                                            <td style="text-align: center;">
+                                                <input type="checkbox" name="perm[<?= $m['id'] ?>][create]" value="1" class="crud-chk user-chk-create" id="user_perm_<?= $m['id'] ?>_create" onchange="onCrudCheckboxChange('user', <?= $m['id'] ?>, 'create')">
+                                            </td>
+                                            <td style="text-align: center;">
+                                                <input type="checkbox" name="perm[<?= $m['id'] ?>][edit]" value="1" class="crud-chk user-chk-edit" id="user_perm_<?= $m['id'] ?>_edit" onchange="onCrudCheckboxChange('user', <?= $m['id'] ?>, 'edit')">
+                                            </td>
+                                            <td style="text-align: center;">
+                                                <input type="checkbox" name="perm[<?= $m['id'] ?>][delete]" value="1" class="crud-chk user-chk-delete" id="user_perm_<?= $m['id'] ?>_delete" onchange="onCrudCheckboxChange('user', <?= $m['id'] ?>, 'delete')">
+                                            </td>
+                                            <td style="text-align: center;">
+                                                <input type="checkbox" class="crud-row-all user-chk-row-all" id="user_row_all_<?= $m['id'] ?>" onchange="toggleMatrixRow('user', <?= $m['id'] ?>, this.checked)">
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
 
             <div class="custom-modal-footer">
                 <button type="button" class="btn btn-secondary" onclick="closeModal('modalUserPermissions')">Batal</button>
                 <button type="submit" class="btn btn-primary">
-                    <i class="fa-solid fa-floppy-disk"></i> Simpan Hak Akses
+                    <i class="fa-solid fa-floppy-disk"></i> Simpan Matriks Hak Akses
                 </button>
             </div>
         </form>
@@ -1747,18 +2343,18 @@ require_once __DIR__ . '/../../includes/header.php';
 </div>
 
 <!-- ========================================================================= -->
-<!-- MODAL: ATUR DEFAULT MENU ROLE -->
+<!-- MODAL: ATUR DEFAULT MATRIKS AKSES ROLE (2D CRUD MATRIX) -->
 <!-- ========================================================================= -->
 <div id="modalRolePermissions" class="custom-modal-overlay">
-    <div class="custom-modal-box">
+    <div class="custom-modal-box" style="max-width: 960px;">
         <div class="custom-modal-header">
             <div>
                 <h3 style="margin: 0; font-size: 18px; color: #0f172a;">
-                    <i class="fa-solid fa-key" style="color: var(--primary); margin-right: 8px;"></i>
-                    Atur Default Akses: <span id="modalRoleNameText" style="color: var(--primary);">-</span>
+                    <i class="fa-solid fa-table-cells" style="color: var(--primary); margin-right: 8px;"></i>
+                    Atur Matriks Default Akses: <span id="modalRoleNameText" style="color: var(--primary);">-</span>
                 </h3>
                 <div style="font-size: 12px; color: #64748b; margin-top: 4px;">
-                    Setiap user yang diberi role ini akan otomatis mendapatkan hak akses menu di bawah ini.
+                    Setiap user yang diberi role ini akan otomatis mendapatkan hak akses CRUD di bawah ini.
                 </div>
             </div>
             <button type="button" class="btn-close-sidebar" style="position: static;" onclick="closeModal('modalRolePermissions')">
@@ -1771,61 +2367,122 @@ require_once __DIR__ . '/../../includes/header.php';
             <input type="hidden" name="role_id" id="targetRoleIdInput" value="">
 
             <div class="custom-modal-body">
-                <div style="display: flex; gap: 8px; margin-bottom: 16px;">
-                    <button type="button" class="btn btn-sm btn-secondary" onclick="toggleRoleCheckboxes(true)">
-                        <i class="fa-solid fa-check-double"></i> Pilih Semua
-                    </button>
-                    <button type="button" class="btn btn-sm btn-secondary" onclick="toggleRoleCheckboxes(false)">
-                        <i class="fa-solid fa-xmark"></i> Kosongkan
-                    </button>
-                </div>
-
-                <?php foreach ($menusByCategory as $category => $items): ?>
-                    <div class="category-card" data-category="<?= htmlspecialchars($category) ?>">
-                        <div class="category-header" style="display: flex; justify-content: space-between; align-items: center;">
-                            <span class="category-title"><i class="fa-solid fa-folder"></i> <?= htmlspecialchars($category) ?></span>
-                            <label style="font-size: 11.5px; color: #0284c7; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; margin: 0;">
-                                <input type="checkbox" class="cat-select-all" onchange="toggleCategoryCheckboxes(this)" style="cursor: pointer;">
-                                <span>Pilih Semua (<?= count($items) ?>)</span>
-                            </label>
+                <div class="crud-matrix-wrapper">
+                    <!-- TOOLBAR AKSI PRESET -->
+                    <div class="crud-matrix-toolbar">
+                        <div class="crud-toolbar-actions">
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="applyMatrixPreset('role', 'full')">
+                                <i class="fa-solid fa-check-double" style="color: #10b981;"></i> Pilih Semua (Full CRUD)
+                            </button>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="applyMatrixPreset('role', 'readonly')">
+                                <i class="fa-solid fa-eye" style="color: #0284c7;"></i> Hanya Lihat (View Only)
+                            </button>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="applyMatrixPreset('role', 'empty')">
+                                <i class="fa-solid fa-xmark" style="color: #ef4444;"></i> Kosongkan
+                            </button>
                         </div>
-                        <div class="menu-grid">
-                            <?php foreach ($items as $m): ?>
-                                <?php
-                                    $icon = !empty($m['menu_icon']) ? $m['menu_icon'] : 'fa-circle';
-                                    if (strpos($icon, 'fa-') !== false && strpos($icon, 'fa-solid ') === false) {
-                                        $icon = 'fa-solid ' . $icon;
-                                    }
-                                    $isOtMenu = ($m['menu_key'] === 'reports_overtimes');
-                                ?>
-                                <label class="menu-checkbox-item" data-menuname="<?= htmlspecialchars(strtolower($m['menu_name'])) ?>" data-menukey="<?= htmlspecialchars(strtolower($m['menu_key'])) ?>" <?= $isOtMenu ? 'style="border: 1.5px solid #f59e0b; background: #fffbeb;"' : '' ?>>
-                                    <input type="checkbox" name="menu_ids[]" value="<?= $m['id'] ?>" class="role-menu-chk" id="chk_role_<?= $m['id'] ?>" onchange="syncCategoryCheckboxes()">
-                                    <span class="menu-checkbox-label" style="flex: 1; display: flex; align-items: center; justify-content: space-between;">
-                                        <span style="display: flex; align-items: center; gap: 6px;">
-                                            <i class="<?= htmlspecialchars($icon) ?>" style="color: <?= $isOtMenu ? '#d97706' : 'var(--primary)' ?>; width: 16px; text-align: center;"></i>
-                                            <?= htmlspecialchars($m['menu_name']) ?>
-                                        </span>
-                                        <?php if ($isOtMenu): ?>
-                                            <span style="font-size: 10px; background: #fef3c7; color: #b45309; padding: 2px 6px; border-radius: 4px; font-weight: 700; border: 1px solid #fde68a; margin-left: 6px;">⭐ HRD / Jam Lembur</span>
-                                        <?php endif; ?>
-                                    </span>
-                                </label>
-                            <?php endforeach; ?>
+                        <div class="crud-toolbar-search">
+                            <div style="position: relative;">
+                                <input type="text" id="searchMenuInputRole" placeholder="Cari modul / menu..." onkeyup="filterMatrixRows('role', this.value)" style="padding: 6px 12px 6px 28px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 12px; width: 200px;">
+                                <i class="fa-solid fa-magnifying-glass" style="position: absolute; left: 9px; top: 9px; color: #94a3b8; font-size: 11px;"></i>
+                            </div>
                         </div>
                     </div>
-                <?php endforeach; ?>
+
+                    <!-- TABEL MATRIKS CRUD ROLE -->
+                    <div class="crud-table-scroll">
+                        <table class="crud-matrix-table" id="tableMatrixRole">
+                            <thead>
+                                <tr>
+                                    <th style="min-width: 240px; text-align: left;">Modul / Fitur Aplikasi</th>
+                                    <th style="width: 80px; text-align: center;">
+                                        <label class="col-header-chk-label">
+                                            <input type="checkbox" id="role_col_read" onchange="toggleMatrixCol('role', 'read', this.checked)">
+                                            <span>Read</span>
+                                        </label>
+                                    </th>
+                                    <th style="width: 80px; text-align: center;">
+                                        <label class="col-header-chk-label">
+                                            <input type="checkbox" id="role_col_create" onchange="toggleMatrixCol('role', 'create', this.checked)">
+                                            <span>Create</span>
+                                        </label>
+                                    </th>
+                                    <th style="width: 80px; text-align: center;">
+                                        <label class="col-header-chk-label">
+                                            <input type="checkbox" id="role_col_edit" onchange="toggleMatrixCol('role', 'edit', this.checked)">
+                                            <span>Edit</span>
+                                        </label>
+                                    </th>
+                                    <th style="width: 80px; text-align: center;">
+                                        <label class="col-header-chk-label">
+                                            <input type="checkbox" id="role_col_delete" onchange="toggleMatrixCol('role', 'delete', this.checked)">
+                                            <span>Delete</span>
+                                        </label>
+                                    </th>
+                                    <th style="width: 70px; text-align: center;">Semua</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($menusByCategory as $category => $items): ?>
+                                    <tr class="crud-cat-header-row role-cat-row" data-cat="<?= htmlspecialchars($category) ?>">
+                                        <td colspan="6">
+                                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                                <span class="crud-cat-title"><i class="fa-solid fa-folder"></i> <?= htmlspecialchars($category) ?></span>
+                                                <span style="font-size: 11px; color: #64748b; font-weight: 600;"><?= count($items) ?> menu</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    <?php foreach ($items as $m): ?>
+                                        <?php
+                                            $icon = !empty($m['menu_icon']) ? $m['menu_icon'] : 'fa-circle';
+                                            if (strpos($icon, 'fa-') !== false && strpos($icon, 'fa-solid ') === false) {
+                                                $icon = 'fa-solid ' . $icon;
+                                            }
+                                            $isOtMenu = ($m['menu_key'] === 'reports_overtimes');
+                                        ?>
+                                        <tr class="crud-row role-crud-row" data-menuid="<?= $m['id'] ?>" data-name="<?= htmlspecialchars(strtolower($m['menu_name'])) ?>" data-key="<?= htmlspecialchars(strtolower($m['menu_key'])) ?>" data-cat="<?= htmlspecialchars($category) ?>">
+                                            <td>
+                                                <div style="display: flex; align-items: center; gap: 10px;">
+                                                    <i class="<?= htmlspecialchars($icon) ?>" style="color: <?= $isOtMenu ? '#d97706' : 'var(--primary)' ?>; width: 18px; text-align: center; font-size: 15px;"></i>
+                                                    <div>
+                                                        <div style="font-weight: 600; color: #1e293b; font-size: 13.5px;"><?= htmlspecialchars($m['menu_name']) ?></div>
+                                                        <div style="font-size: 11px; color: #94a3b8;"><code><?= htmlspecialchars($m['menu_key']) ?></code></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td style="text-align: center;">
+                                                <input type="checkbox" name="perm[<?= $m['id'] ?>][read]" value="1" class="crud-chk role-chk-read" id="role_perm_<?= $m['id'] ?>_read" onchange="onCrudCheckboxChange('role', <?= $m['id'] ?>, 'read')">
+                                            </td>
+                                            <td style="text-align: center;">
+                                                <input type="checkbox" name="perm[<?= $m['id'] ?>][create]" value="1" class="crud-chk role-chk-create" id="role_perm_<?= $m['id'] ?>_create" onchange="onCrudCheckboxChange('role', <?= $m['id'] ?>, 'create')">
+                                            </td>
+                                            <td style="text-align: center;">
+                                                <input type="checkbox" name="perm[<?= $m['id'] ?>][edit]" value="1" class="crud-chk role-chk-edit" id="role_perm_<?= $m['id'] ?>_edit" onchange="onCrudCheckboxChange('role', <?= $m['id'] ?>, 'edit')">
+                                            </td>
+                                            <td style="text-align: center;">
+                                                <input type="checkbox" name="perm[<?= $m['id'] ?>][delete]" value="1" class="crud-chk role-chk-delete" id="role_perm_<?= $m['id'] ?>_delete" onchange="onCrudCheckboxChange('role', <?= $m['id'] ?>, 'delete')">
+                                            </td>
+                                            <td style="text-align: center;">
+                                                <input type="checkbox" class="crud-row-all role-chk-row-all" id="role_row_all_<?= $m['id'] ?>" onchange="toggleMatrixRow('role', <?= $m['id'] ?>, this.checked)">
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
 
             <div class="custom-modal-footer">
                 <button type="button" class="btn btn-secondary" onclick="closeModal('modalRolePermissions')">Batal</button>
                 <button type="submit" class="btn btn-primary">
-                    <i class="fa-solid fa-floppy-disk"></i> Simpan Default Role
+                    <i class="fa-solid fa-floppy-disk"></i> Simpan Matriks Role
                 </button>
             </div>
         </form>
     </div>
 </div>
-
 <!-- ========================================================================= -->
 <!-- MODAL: TAMBAH USER BARU -->
 <!-- ========================================================================= -->
@@ -1948,15 +2605,16 @@ require_once __DIR__ . '/../../includes/header.php';
     </div>
 </div>
 
+
 <!-- ========================================================================= -->
-<!-- MODAL: BUAT ROLE BARU -->
+<!-- MODAL: BUAT ROLE BARU DENGAN 2D CRUD MATRIX -->
 <!-- ========================================================================= -->
 <div id="modalCreateRole" class="custom-modal-overlay">
-    <div class="custom-modal-box">
+    <div class="custom-modal-box" style="max-width: 960px;">
         <div class="custom-modal-header">
             <h3 style="margin: 0; font-size: 18px; color: #0f172a;">
                 <i class="fa-solid fa-plus-circle" style="color: var(--primary); margin-right: 8px;"></i>
-                Buat Role Baru & Tentukan Default Akses
+                Buat Role Baru & Tentukan Default Matriks Akses
             </h3>
             <button type="button" class="btn-close-sidebar" style="position: static;" onclick="closeModal('modalCreateRole')">
                 <i class="fa-solid fa-xmark"></i>
@@ -1969,51 +2627,109 @@ require_once __DIR__ . '/../../includes/header.php';
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
                     <div class="form-group">
                         <label style="display: block; font-weight: 600; margin-bottom: 6px;">Nama Role *</label>
-                        <input type="text" name="role_name" required placeholder="Misal: Guru Piket, Tata Usaha"
+                        <input type="text" name="role_name" required placeholder="Misal: Guru Piket, Mentor MIP, HRD"
                                style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box;"
                                onkeyup="autoGenerateRoleKey(this.value)">
                     </div>
                     <div class="form-group">
                         <label style="display: block; font-weight: 600; margin-bottom: 6px;">Kode Sistem (Slug) *</label>
-                        <input type="text" name="role_key" id="newRoleKeyInput" required placeholder="Misal: guru_piket"
+                        <input type="text" name="role_key" id="newRoleKeyInput" required placeholder="Misal: guru_piket, mentor_mip"
                                style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box;">
                     </div>
                 </div>
 
                 <div class="form-group" style="margin-bottom: 20px;">
                     <label style="display: block; font-weight: 600; margin-bottom: 6px;">Deskripsi / Keterangan</label>
-                    <input type="text" name="description" placeholder="Contoh: Mengatur piket harian dan absensi kehadiran siswa"
+                    <input type="text" name="description" placeholder="Contoh: Mengatur pembinaan adab santri dan pemantauan harian"
                            style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box;">
                 </div>
 
                 <div style="margin-bottom: 12px; font-weight: 700; color: #334155; font-size: 14px;">
-                    Pilih Menu Default yang Diizinkan untuk Role Ini:
+                    Tentukan Default Hak Akses CRUD untuk Role Baru Ini:
                 </div>
 
-                <?php foreach ($menusByCategory as $category => $items): ?>
-                    <div class="category-card">
-                        <div class="category-header">
-                            <span class="category-title"><i class="fa-solid fa-folder"></i> <?= htmlspecialchars($category) ?></span>
-                        </div>
-                        <div class="menu-grid">
-                            <?php foreach ($items as $m): ?>
-                                <?php
-                                    $icon = !empty($m['menu_icon']) ? $m['menu_icon'] : 'fa-circle';
-                                    if (strpos($icon, 'fa-') !== false && strpos($icon, 'fa-solid ') === false) {
-                                        $icon = 'fa-solid ' . $icon;
-                                    }
-                                ?>
-                                <label class="menu-checkbox-item">
-                                    <input type="checkbox" name="menu_ids[]" value="<?= $m['id'] ?>">
-                                    <span class="menu-checkbox-label">
-                                        <i class="<?= htmlspecialchars($icon) ?>" style="color: var(--primary); width: 16px; text-align: center;"></i>
-                                        <?= htmlspecialchars($m['menu_name']) ?>
-                                    </span>
-                                </label>
-                            <?php endforeach; ?>
+                <div class="crud-matrix-wrapper">
+                    <div class="crud-matrix-toolbar">
+                        <div class="crud-toolbar-actions">
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="applyMatrixPreset('create', 'full')">
+                                <i class="fa-solid fa-check-double" style="color: #10b981;"></i> Pilih Semua (Full CRUD)
+                            </button>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="applyMatrixPreset('create', 'readonly')">
+                                <i class="fa-solid fa-eye" style="color: #0284c7;"></i> Hanya Lihat (View Only)
+                            </button>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="applyMatrixPreset('create', 'empty')">
+                                <i class="fa-solid fa-xmark" style="color: #ef4444;"></i> Kosongkan
+                            </button>
                         </div>
                     </div>
-                <?php endforeach; ?>
+
+                    <div class="crud-table-scroll" style="max-height: 40vh;">
+                        <table class="crud-matrix-table" id="tableMatrixCreate">
+                            <thead>
+                                <tr>
+                                    <th style="min-width: 240px; text-align: left;">Modul / Fitur Aplikasi</th>
+                                    <th style="width: 80px; text-align: center;">
+                                        <label class="col-header-chk-label">
+                                            <input type="checkbox" id="create_col_read" onchange="toggleMatrixCol('create', 'read', this.checked)">
+                                            <span>Read</span>
+                                        </label>
+                                    </th>
+                                    <th style="width: 80px; text-align: center;">
+                                        <label class="col-header-chk-label">
+                                            <input type="checkbox" id="create_col_create" onchange="toggleMatrixCol('create', 'create', this.checked)">
+                                            <span>Create</span>
+                                        </label>
+                                    </th>
+                                    <th style="width: 80px; text-align: center;">
+                                        <label class="col-header-chk-label">
+                                            <input type="checkbox" id="create_col_edit" onchange="toggleMatrixCol('create', 'edit', this.checked)">
+                                            <span>Edit</span>
+                                        </label>
+                                    </th>
+                                    <th style="width: 80px; text-align: center;">
+                                        <label class="col-header-chk-label">
+                                            <input type="checkbox" id="create_col_delete" onchange="toggleMatrixCol('create', 'delete', this.checked)">
+                                            <span>Delete</span>
+                                        </label>
+                                    </th>
+                                    <th style="width: 70px; text-align: center;">Semua</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($menusByCategory as $category => $items): ?>
+                                    <tr class="crud-cat-header-row create-cat-row">
+                                        <td colspan="6">
+                                            <span class="crud-cat-title"><i class="fa-solid fa-folder"></i> <?= htmlspecialchars($category) ?></span>
+                                        </td>
+                                    </tr>
+                                    <?php foreach ($items as $m): ?>
+                                        <tr class="crud-row create-crud-row" data-menuid="<?= $m['id'] ?>">
+                                            <td>
+                                                <div style="font-weight: 600; color: #1e293b; font-size: 13.5px;"><?= htmlspecialchars($m['menu_name']) ?></div>
+                                                <div style="font-size: 11px; color: #94a3b8;"><code><?= htmlspecialchars($m['menu_key']) ?></code></div>
+                                            </td>
+                                            <td style="text-align: center;">
+                                                <input type="checkbox" name="perm[<?= $m['id'] ?>][read]" value="1" class="crud-chk create-chk-read" id="create_perm_<?= $m['id'] ?>_read" onchange="onCrudCheckboxChange('create', <?= $m['id'] ?>, 'read')">
+                                            </td>
+                                            <td style="text-align: center;">
+                                                <input type="checkbox" name="perm[<?= $m['id'] ?>][create]" value="1" class="crud-chk create-chk-create" id="create_perm_<?= $m['id'] ?>_create" onchange="onCrudCheckboxChange('create', <?= $m['id'] ?>, 'create')">
+                                            </td>
+                                            <td style="text-align: center;">
+                                                <input type="checkbox" name="perm[<?= $m['id'] ?>][edit]" value="1" class="crud-chk create-chk-edit" id="create_perm_<?= $m['id'] ?>_edit" onchange="onCrudCheckboxChange('create', <?= $m['id'] ?>, 'edit')">
+                                            </td>
+                                            <td style="text-align: center;">
+                                                <input type="checkbox" name="perm[<?= $m['id'] ?>][delete]" value="1" class="crud-chk create-chk-delete" id="create_perm_<?= $m['id'] ?>_delete" onchange="onCrudCheckboxChange('create', <?= $m['id'] ?>, 'delete')">
+                                            </td>
+                                            <td style="text-align: center;">
+                                                <input type="checkbox" class="crud-row-all create-chk-row-all" id="create_row_all_<?= $m['id'] ?>" onchange="toggleMatrixRow('create', <?= $m['id'] ?>, this.checked)">
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
 
             <div class="custom-modal-footer">
@@ -2044,7 +2760,6 @@ function closeModal(id) {
     }
 }
 
-// Tutup modal jika klik di luar box
 window.addEventListener('click', function(e) {
     if (e.target.classList.contains('custom-modal-overlay')) {
         e.target.style.display = 'none';
@@ -2087,19 +2802,13 @@ function updateBulkToolbarState() {
         }
     }
 
-    // Update row highlighting
     document.querySelectorAll('.user-bulk-chk').forEach(chk => {
         const row = chk.closest('tr');
         if (row) {
-            if (chk.checked) {
-                row.style.background = '#f0fdf4';
-            } else {
-                row.style.background = '';
-            }
+            row.style.background = chk.checked ? '#f0fdf4' : '';
         }
     });
 
-    // Update check all header status
     const allRowChks = Array.from(document.querySelectorAll('.user-bulk-chk'));
     const checkAllHeader = document.getElementById('checkAllUsers');
     if (checkAllHeader && allRowChks.length > 0) {
@@ -2135,7 +2844,6 @@ function deselectAllUsers() {
     updateBulkToolbarState();
 }
 
-// Buka Modal Bulk Change Role
 function openBulkChangeRoleModal() {
     const ids = getSelectedUserIds();
     if (ids.length === 0) {
@@ -2147,32 +2855,36 @@ function openBulkChangeRoleModal() {
     openModal('modalBulkChangeRole');
 }
 
-// Buka Modal Bulk Menu Action (Grant / Revoke)
-function openBulkMenuActionModal() {
+function openBulkMenuActionModal(actionType) {
     const ids = getSelectedUserIds();
     if (ids.length === 0) {
         alert('Silakan centang minimal satu pengguna.');
         return;
     }
-    document.getElementById('bulkMenuUserCount').innerText = ids.length;
-    document.getElementById('bulkMenuUserIdsInput').value = JSON.stringify(ids);
-    toggleBulkMenuCheckboxes(false);
+    document.getElementById('bulkMenuActionType').value = actionType;
+    document.getElementById('bulkMenuActionCount').innerText = ids.length;
+    document.getElementById('bulkMenuActionUserIds').value = JSON.stringify(ids);
+    
+    const titleEl = document.getElementById('bulkMenuActionTitle');
+    const noteEl = document.getElementById('bulkMenuActionNote');
+    if (actionType === 'grant') {
+        titleEl.innerHTML = '<i class="fa-solid fa-plus-circle" style="color: #10b981; margin-right: 8px;"></i> Tambah Izin Menu Massal';
+        noteEl.innerHTML = 'Centang menu yang ingin <strong>DITAMBAHKAN</strong> ke ' + ids.length + ' pengguna terpilih (izin menu mereka sebelumnya tetap aman).';
+    } else {
+        titleEl.innerHTML = '<i class="fa-solid fa-minus-circle" style="color: #ef4444; margin-right: 8px;"></i> Cabut Izin Menu Massal';
+        noteEl.innerHTML = 'Centang menu yang ingin <strong>DICABUT</strong> dari ' + ids.length + ' pengguna terpilih.';
+    }
+    document.querySelectorAll('.bulk-menu-chk').forEach(chk => chk.checked = false);
     openModal('modalBulkMenuAction');
 }
 
-function toggleBulkMenuCheckboxes(check) {
-    document.querySelectorAll('.bulk-menu-chk').forEach(c => c.checked = check);
-    syncCategoryCheckboxes();
-}
-
-// Eksekusi Bulk Reset Permissions
 function submitBulkResetPermissions() {
     const ids = getSelectedUserIds();
     if (ids.length === 0) {
         alert('Silakan centang minimal satu pengguna.');
         return;
     }
-    if (confirm(`Apakah Anda yakin ingin me-reset hak akses ${ids.length} pengguna terpilih ke template bawaan role mereka masing-masing?\n\nSemua kustomisasi menu manual mereka akan diselaraskan dengan role.`)) {
+    if (confirm(`Apakah Anda yakin ingin me-reset hak akses ${ids.length} pengguna terpilih ke DEFAULT ROLE mereka masing-masing?`)) {
         const form = document.createElement('form');
         form.method = 'POST';
         form.innerHTML = `
@@ -2184,14 +2896,15 @@ function submitBulkResetPermissions() {
     }
 }
 
-// Eksekusi Bulk Delete Users
 function submitBulkDelete() {
     const ids = getSelectedUserIds();
     if (ids.length === 0) {
         alert('Silakan centang minimal satu pengguna.');
         return;
     }
-    if (confirm(`PERINGATAN: Apakah Anda yakin ingin menonaktifkan/menghapus ${ids.length} pengguna terpilih?\n\n(Catatan: Akun Super Admin yang sedang aktif login tidak akan dihapus demi keamanan sistem).`)) {
+    if (confirm(`PERINGATAN: Apakah Anda yakin ingin menonaktifkan/menghapus ${ids.length} pengguna terpilih?
+
+(Catatan: Akun Super Admin yang sedang aktif login tidak akan dihapus demi keamanan sistem).`)) {
         const form = document.createElement('form');
         form.method = 'POST';
         form.innerHTML = `
@@ -2204,45 +2917,253 @@ function submitBulkDelete() {
 }
 
 // =========================================================================
-// QUICK CHANGE ROLE PER PENGGUNA (DENGAN OPSI SETTING MANUAL)
+// MULTI-ROLE MODAL CONTROLLER
 // =========================================================================
-function openQuickChangeRoleModal(userId, userName, userUsername, currentRole) {
-    document.getElementById('quickRoleUserId').value = userId;
-    document.getElementById('quickRoleUserName').innerText = userName;
-    document.getElementById('quickRoleUserUsername').innerText = userUsername;
-    
-    const select = document.getElementById('quickRoleSelect');
-    if (select) {
-        select.value = currentRole;
+function openMultiRoleModal(userId, userName, userUsername) {
+    document.getElementById('multiRoleUserId').value = userId;
+    document.getElementById('multiRoleUserName').innerText = userName;
+    document.getElementById('multiRoleUserUsername').innerText = userUsername;
+
+    // Reset all checkboxes & radios
+    document.querySelectorAll('.multi-role-chk').forEach(c => c.checked = false);
+    document.querySelectorAll('.multi-role-primary-radio').forEach(r => r.checked = false);
+    document.querySelectorAll('.multi-role-option-card').forEach(card => card.classList.remove('active'));
+
+    openModal('modalMultiRole');
+
+    fetch('index.php?action=get_user_roles&user_id=' + userId)
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'success') {
+                const assigned = data.assigned_role_ids || [];
+                const primaryId = data.primary_role_id || 0;
+
+                assigned.forEach(rid => {
+                    const chk = document.getElementById('mr_chk_' + rid);
+                    if (chk) {
+                        chk.checked = true;
+                        const card = document.getElementById('role_card_' + rid);
+                        if (card) card.classList.add('active');
+                    }
+                });
+
+                if (primaryId > 0) {
+                    const rRadio = document.getElementById('mr_radio_' + primaryId);
+                    if (rRadio) rRadio.checked = true;
+                } else if (assigned.length > 0) {
+                    const rRadio = document.getElementById('mr_radio_' + assigned[0]);
+                    if (rRadio) rRadio.checked = true;
+                }
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            alert('Gagal mengambil data role pengguna.');
+        });
+}
+
+function onMultiRoleCheckChange(roleId) {
+    const chk = document.getElementById('mr_chk_' + roleId);
+    const card = document.getElementById('role_card_' + roleId);
+    const radio = document.getElementById('mr_radio_' + roleId);
+
+    if (chk && chk.checked) {
+        if (card) card.classList.add('active');
+        // Jika belum ada radio primary yang dicentang, centang ini
+        const hasCheckedRadio = Array.from(document.querySelectorAll('.multi-role-primary-radio')).some(r => r.checked);
+        if (!hasCheckedRadio && radio) {
+            radio.checked = true;
+        }
+    } else {
+        if (card) card.classList.remove('active');
+        if (radio && radio.checked) {
+            radio.checked = false;
+            // Pilih role lain yang aktif sebagai primary
+            const firstActiveChk = document.querySelector('.multi-role-chk:checked');
+            if (firstActiveChk) {
+                const otherRadio = document.getElementById('mr_radio_' + firstActiveChk.value);
+                if (otherRadio) otherRadio.checked = true;
+            }
+        }
     }
-    openModal('modalQuickChangeRole');
+}
+
+function onPrimaryRadioChange(roleId) {
+    // Otomatis centang role tersebut jika dijadikan primary
+    const chk = document.getElementById('mr_chk_' + roleId);
+    if (chk && !chk.checked) {
+        chk.checked = true;
+        onMultiRoleCheckChange(roleId);
+    }
 }
 
 // =========================================================================
-// EDIT ROLE MODAL
+// 2D CRUD MATRIX LOGIC & EVENT HANDLERS
 // =========================================================================
-function openEditRoleModal(role) {
-    document.getElementById('editRoleId').value = role.id;
-    document.getElementById('editRoleName').value = role.role_name;
-    document.getElementById('editRoleKey').value = role.role_key;
-    document.getElementById('editRoleDescription').value = role.description || '';
-    openModal('modalEditRole');
+
+// Preset: Full CRUD, Read Only, Empty
+function applyMatrixPreset(target, mode) {
+    const rows = document.querySelectorAll(`.${target}-crud-row`);
+    rows.forEach(row => {
+        if (row.style.display === 'none') return; // Lewati jika tersembunyi karena search
+        const mId = row.getAttribute('data-menuid');
+        const chkR = document.getElementById(`${target}_perm_${mId}_read`);
+        const chkC = document.getElementById(`${target}_perm_${mId}_create`);
+        const chkE = document.getElementById(`${target}_perm_${mId}_edit`);
+        const chkD = document.getElementById(`${target}_perm_${mId}_delete`);
+        const chkAll = document.getElementById(`${target}_row_all_${mId}`);
+
+        if (mode === 'full') {
+            if (chkR) chkR.checked = true;
+            if (chkC) chkC.checked = true;
+            if (chkE) chkE.checked = true;
+            if (chkD) chkD.checked = true;
+            if (chkAll) chkAll.checked = true;
+        } else if (mode === 'readonly') {
+            if (chkR) chkR.checked = true;
+            if (chkC) chkC.checked = false;
+            if (chkE) chkE.checked = false;
+            if (chkD) chkD.checked = false;
+            if (chkAll) chkAll.checked = false;
+        } else if (mode === 'empty') {
+            if (chkR) chkR.checked = false;
+            if (chkC) chkC.checked = false;
+            if (chkE) chkE.checked = false;
+            if (chkD) chkD.checked = false;
+            if (chkAll) chkAll.checked = false;
+        }
+    });
+    syncMatrixColHeaders(target);
+}
+
+// Toggle Kolom (Read, Create, Edit, Delete)
+function toggleMatrixCol(target, action, isChecked) {
+    const chks = document.querySelectorAll(`.${target}-chk-${action}`);
+    chks.forEach(chk => {
+        const row = chk.closest('tr');
+        if (row && row.style.display !== 'none') {
+            chk.checked = isChecked;
+            const mId = row.getAttribute('data-menuid');
+            // Jika Create/Edit/Delete dicentang, otomatis aktifkan Read
+            if (isChecked && action !== 'read') {
+                const readChk = document.getElementById(`${target}_perm_${mId}_read`);
+                if (readChk) readChk.checked = true;
+            }
+            syncMatrixRowState(target, mId);
+        }
+    });
+    syncMatrixColHeaders(target);
+}
+
+// Toggle Baris (Semua CRUD pada satu baris menu)
+function toggleMatrixRow(target, menuId, isChecked) {
+    const chkR = document.getElementById(`${target}_perm_${menuId}_read`);
+    const chkC = document.getElementById(`${target}_perm_${menuId}_create`);
+    const chkE = document.getElementById(`${target}_perm_${menuId}_edit`);
+    const chkD = document.getElementById(`${target}_perm_${menuId}_delete`);
+
+    if (chkR) chkR.checked = isChecked;
+    if (chkC) chkC.checked = isChecked;
+    if (chkE) chkE.checked = isChecked;
+    if (chkD) chkD.checked = isChecked;
+
+    syncMatrixColHeaders(target);
+}
+
+// Perubahan pada Checkbox CRUD individu
+function onCrudCheckboxChange(target, menuId, action) {
+    const chk = document.getElementById(`${target}_perm_${menuId}_${action}`);
+    const chkR = document.getElementById(`${target}_perm_${menuId}_read`);
+
+    // Aturan RBAC: Tidak bisa Create/Edit/Delete tanpa hak Read
+    if (chk && chk.checked && action !== 'read') {
+        if (chkR) chkR.checked = true;
+    }
+    // Jika Read dimatikan, otomatis matikan Create/Edit/Delete
+    if (action === 'read' && chk && !chk.checked) {
+        const chkC = document.getElementById(`${target}_perm_${menuId}_create`);
+        const chkE = document.getElementById(`${target}_perm_${menuId}_edit`);
+        const chkD = document.getElementById(`${target}_perm_${menuId}_delete`);
+        if (chkC) chkC.checked = false;
+        if (chkE) chkE.checked = false;
+        if (chkD) chkD.checked = false;
+    }
+
+    syncMatrixRowState(target, menuId);
+    syncMatrixColHeaders(target);
+}
+
+// Sinkronisasi status checkbox "Semua" pada baris
+function syncMatrixRowState(target, menuId) {
+    const chkR = document.getElementById(`${target}_perm_${menuId}_read`);
+    const chkC = document.getElementById(`${target}_perm_${menuId}_create`);
+    const chkE = document.getElementById(`${target}_perm_${menuId}_edit`);
+    const chkD = document.getElementById(`${target}_perm_${menuId}_delete`);
+    const chkAll = document.getElementById(`${target}_row_all_${menuId}`);
+
+    if (chkAll) {
+        const allChecked = (chkR && chkR.checked) && (chkC && chkC.checked) && (chkE && chkE.checked) && (chkD && chkD.checked);
+        const someChecked = (chkR && chkR.checked) || (chkC && chkC.checked) || (chkE && chkE.checked) || (chkD && chkD.checked);
+        chkAll.checked = allChecked;
+        chkAll.indeterminate = !allChecked && someChecked;
+    }
+}
+
+// Sinkronisasi status checkbox di header kolom
+function syncMatrixColHeaders(target) {
+    ['read', 'create', 'edit', 'delete'].forEach(act => {
+        const headerChk = document.getElementById(`${target}_col_${act}`);
+        if (!headerChk) return;
+        const colChks = Array.from(document.querySelectorAll(`.${target}-chk-${act}`)).filter(c => c.closest('tr').style.display !== 'none');
+        if (colChks.length === 0) return;
+        const checkedCount = colChks.filter(c => c.checked).length;
+        headerChk.checked = (checkedCount === colChks.length);
+        headerChk.indeterminate = (checkedCount > 0 && checkedCount < colChks.length);
+    });
+}
+
+// Live Search di Matriks
+function filterMatrixRows(target, query) {
+    const q = (query || '').toLowerCase().trim();
+    const rows = document.querySelectorAll(`.${target}-crud-row`);
+    const catRows = document.querySelectorAll(`.${target}-cat-row`);
+
+    const activeCats = new Set();
+    rows.forEach(r => {
+        const name = r.getAttribute('data-name') || '';
+        const key = r.getAttribute('data-key') || '';
+        const cat = r.getAttribute('data-cat') || '';
+
+        if (!q || name.includes(q) || key.includes(q) || cat.toLowerCase().includes(q)) {
+            r.style.display = '';
+            activeCats.add(cat);
+        } else {
+            r.style.display = 'none';
+        }
+    });
+
+    catRows.forEach(cr => {
+        const cat = cr.getAttribute('data-cat') || '';
+        cr.style.display = activeCats.has(cat) ? '' : 'none';
+    });
+
+    syncMatrixColHeaders(target);
 }
 
 // =========================================================================
-// USER PERMISSIONS MODAL (SETTING MANUAL MENU)
+// BUKA MODAL USER PERMISSIONS (2D MATRIX)
 // =========================================================================
 function openUserPermissionsModal(userId) {
     document.getElementById('targetUserIdInput').value = userId;
     document.getElementById('modalTargetUserName').innerText = 'Memuat...';
     document.getElementById('modalTargetUserRole').innerText = '-';
     
-    const searchInput = document.getElementById('searchMenuInput');
+    const searchInput = document.getElementById('searchMenuInputUser');
     if (searchInput) {
         searchInput.value = '';
-        filterMenuCheckboxes();
+        filterMatrixRows('user', '');
     }
-    toggleAllCheckboxes(false);
+    applyMatrixPreset('user', 'empty');
     document.getElementById('roleTemplateSelector').value = '';
 
     openModal('modalUserPermissions');
@@ -2252,13 +3173,32 @@ function openUserPermissionsModal(userId) {
         .then(data => {
             if (data.status === 'success') {
                 document.getElementById('modalTargetUserName').innerText = data.user.name;
-                document.getElementById('modalTargetUserRole').innerText = data.user.role.toUpperCase();
                 
-                data.menu_ids.forEach(mId => {
-                    const chk = document.getElementById('chk_user_' + mId);
-                    if (chk) chk.checked = true;
-                });
-                syncCategoryCheckboxes();
+                // Format label role (termasuk multi-role jika ada)
+                let roleStr = data.user.role.toUpperCase();
+                if (data.roles && data.roles.length > 1) {
+                    const extraNames = data.roles.filter(r => r.role_key !== data.user.role).map(r => r.role_name);
+                    if (extraNames.length > 0) {
+                        roleStr += ' (+' + extraNames.join(', ') + ')';
+                    }
+                }
+                document.getElementById('modalTargetUserRole').innerText = roleStr;
+                
+                const perms = data.permissions || {};
+                for (const [mId, p] of Object.entries(perms)) {
+                    const chkR = document.getElementById(`user_perm_${mId}_read`);
+                    const chkC = document.getElementById(`user_perm_${mId}_create`);
+                    const chkE = document.getElementById(`user_perm_${mId}_edit`);
+                    const chkD = document.getElementById(`user_perm_${mId}_delete`);
+
+                    if (chkR) chkR.checked = (p.read === 1);
+                    if (chkC) chkC.checked = (p.create === 1);
+                    if (chkE) chkE.checked = (p.edit === 1);
+                    if (chkD) chkD.checked = (p.delete === 1);
+
+                    syncMatrixRowState('user', mId);
+                }
+                syncMatrixColHeaders('user');
             } else {
                 alert('Gagal mengambil data hak akses pengguna.');
             }
@@ -2269,26 +3209,79 @@ function openUserPermissionsModal(userId) {
         });
 }
 
-// Buka Modal Atur Default Role
+// Terapkan Template Role ke Matriks User
+function applyRoleTemplateToMatrix(roleKey) {
+    if (!roleKey) return;
+    fetch('index.php?action=get_role_permissions&role_key=' + encodeURIComponent(roleKey))
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'success') {
+                applyMatrixPreset('user', 'empty');
+                const perms = data.permissions || {};
+                for (const [mId, p] of Object.entries(perms)) {
+                    const chkR = document.getElementById(`user_perm_${mId}_read`);
+                    const chkC = document.getElementById(`user_perm_${mId}_create`);
+                    const chkE = document.getElementById(`user_perm_${mId}_edit`);
+                    const chkD = document.getElementById(`user_perm_${mId}_delete`);
+
+                    if (chkR) chkR.checked = (p.read === 1);
+                    if (chkC) chkC.checked = (p.create === 1);
+                    if (chkE) chkE.checked = (p.edit === 1);
+                    if (chkD) chkD.checked = (p.delete === 1);
+
+                    syncMatrixRowState('user', mId);
+                }
+                syncMatrixColHeaders('user');
+            }
+        });
+}
+
+// =========================================================================
+// BUKA MODAL ROLE PERMISSIONS (2D MATRIX)
+// =========================================================================
 function openRolePermissionsModal(roleId, roleName, roleKey) {
     document.getElementById('targetRoleIdInput').value = roleId;
     document.getElementById('modalRoleNameText').innerText = roleName + ' (' + roleKey + ')';
 
-    toggleRoleCheckboxes(false);
+    const searchInput = document.getElementById('searchMenuInputRole');
+    if (searchInput) {
+        searchInput.value = '';
+        filterMatrixRows('role', '');
+    }
+    applyMatrixPreset('role', 'empty');
     openModal('modalRolePermissions');
 
-    fetch('index.php?action=get_role_permissions&role_key=' + encodeURIComponent(roleKey))
+    fetch('index.php?action=get_role_permissions&role_id=' + roleId + '&role_key=' + encodeURIComponent(roleKey))
         .then(response => response.json())
         .then(data => {
             if (data.status === 'success') {
-                data.menu_ids.forEach(mId => {
-                    const chk = document.getElementById('chk_role_' + mId);
-                    if (chk) chk.checked = true;
-                });
-                syncCategoryCheckboxes();
+                const perms = data.permissions || {};
+                for (const [mId, p] of Object.entries(perms)) {
+                    const chkR = document.getElementById(`role_perm_${mId}_read`);
+                    const chkC = document.getElementById(`role_perm_${mId}_create`);
+                    const chkE = document.getElementById(`role_perm_${mId}_edit`);
+                    const chkD = document.getElementById(`role_perm_${mId}_delete`);
+
+                    if (chkR) chkR.checked = (p.read === 1);
+                    if (chkC) chkC.checked = (p.create === 1);
+                    if (chkE) chkE.checked = (p.edit === 1);
+                    if (chkD) chkD.checked = (p.delete === 1);
+
+                    syncMatrixRowState('role', mId);
+                }
+                syncMatrixColHeaders('role');
             }
         })
         .catch(err => console.error(err));
+}
+
+// Buka Modal Edit Role
+function openEditRoleModal(role) {
+    document.getElementById('editRoleId').value = role.id;
+    document.getElementById('editRoleName').value = role.role_name;
+    document.getElementById('editRoleKey').value = role.role_key;
+    document.getElementById('editRoleDescription').value = role.description || '';
+    openModal('modalEditRole');
 }
 
 // Buka Modal Edit User Lengkap
@@ -2298,82 +3291,6 @@ function openEditUserModal(user) {
     document.getElementById('editUsername').value = user.username;
     document.getElementById('editRole').value = user.role;
     openModal('modalEditUser');
-}
-
-// Helper: Check/Uncheck Semua Checkbox User
-function toggleAllCheckboxes(check) {
-    document.querySelectorAll('.user-menu-chk').forEach(chk => {
-        chk.checked = check;
-    });
-    syncCategoryCheckboxes();
-}
-
-// Helper: Check/Uncheck Semua Checkbox Role
-function toggleRoleCheckboxes(check) {
-    document.querySelectorAll('.role-menu-chk').forEach(chk => {
-        chk.checked = check;
-    });
-    syncCategoryCheckboxes();
-}
-
-// Helper: Pilih Semua Menu dalam Satu Kategori
-function toggleCategoryCheckboxes(headerCheckbox) {
-    const card = headerCheckbox.closest('.category-card');
-    if (!card) return;
-    const isChecked = headerCheckbox.checked;
-    card.querySelectorAll('.user-menu-chk, .role-menu-chk, .bulk-menu-chk').forEach(chk => {
-        chk.checked = isChecked;
-    });
-    syncCategoryCheckboxes();
-}
-
-// Helper: Sinkronisasi Status Checkbox Header Kategori
-function syncCategoryCheckboxes() {
-    document.querySelectorAll('.category-card').forEach(card => {
-        const catChk = card.querySelector('.cat-select-all');
-        if (!catChk) return;
-        const itemChks = card.querySelectorAll('.user-menu-chk, .role-menu-chk, .bulk-menu-chk');
-        if (itemChks.length === 0) return;
-        const checkedCount = Array.from(itemChks).filter(c => c.checked).length;
-        catChk.checked = (checkedCount === itemChks.length);
-        catChk.indeterminate = (checkedCount > 0 && checkedCount < itemChks.length);
-    });
-}
-
-// Helper: Live Filter Pencarian Menu di Modal Hak Akses
-function filterMenuCheckboxes() {
-    const q = (document.getElementById('searchMenuInput')?.value || '').toLowerCase().trim();
-    document.querySelectorAll('#userMenuCheckboxesContainer .category-card').forEach(card => {
-        let hasVisibleChild = false;
-        card.querySelectorAll('.menu-checkbox-item').forEach(item => {
-            const name = item.getAttribute('data-menuname') || '';
-            const key = item.getAttribute('data-menukey') || '';
-            if (!q || name.includes(q) || key.includes(q)) {
-                item.style.display = '';
-                hasVisibleChild = true;
-            } else {
-                item.style.display = 'none';
-            }
-        });
-        card.style.display = hasVisibleChild ? '' : 'none';
-    });
-}
-
-// Terapkan Template Role ke Checkbox User
-function applyRoleTemplate(roleKey) {
-    if (!roleKey) return;
-    fetch('index.php?action=get_role_permissions&role_key=' + encodeURIComponent(roleKey))
-        .then(res => res.json())
-        .then(data => {
-            if (data.status === 'success') {
-                toggleAllCheckboxes(false);
-                data.menu_ids.forEach(mId => {
-                    const chk = document.getElementById('chk_user_' + mId);
-                    if (chk) chk.checked = true;
-                });
-                syncCategoryCheckboxes();
-            }
-        });
 }
 
 // Otomatis generate slug role
@@ -2411,7 +3328,6 @@ document.addEventListener('DOMContentLoaded', function() {
         const uid = parseInt(openPermUserId);
         if (uid > 0) {
             openUserPermissionsModal(uid);
-            // Bersihkan parameter dari URL browser tanpa reload halaman
             const newUrl = window.location.pathname + '?tab=users';
             window.history.replaceState({}, document.title, newUrl);
         }

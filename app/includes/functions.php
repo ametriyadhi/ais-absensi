@@ -53,78 +53,12 @@ if (!function_exists('setFlash')) {
 }
 
 // =========================================================================
-// ACCESS CONTROL — DATABASE-DRIVEN ACL
+// ACCESS CONTROL — DATABASE-DRIVEN ACL DENGAN GRANULAR CRUD & MULTI-ROLE
 // =========================================================================
 
 /**
- * Ambil semua menu_key yang boleh diakses oleh $userId dari DB.
- * Fallback: jika user belum punya entri di user_menu_access, ambil dari default role.
- */
-if (!function_exists('getUserMenuKeys')) {
-    function getUserMenuKeys(PDO $pdo, int $userId): array
-    {
-        $stmt = $pdo->prepare("
-            SELECT am.menu_key
-            FROM user_menu_access uma
-            INNER JOIN app_menus am ON am.id = uma.menu_id
-            WHERE uma.user_id = ? AND am.is_active = 1
-            ORDER BY am.sort_order ASC
-        ");
-        $stmt->execute([$userId]);
-        $keys = $stmt->fetchAll(PDO::FETCH_COLUMN);
-
-        if (!empty($keys)) {
-            return $keys;
-        }
-
-        // Fallback: ambil default permission dari role jika belum di-set per-user
-        $stmtUser = $pdo->prepare("SELECT role FROM users WHERE id = ?");
-        $stmtUser->execute([$userId]);
-        $roleKey = $stmtUser->fetchColumn();
-
-        if ($roleKey) {
-            if ($roleKey === 'super_admin') {
-                $stmtAll = $pdo->query("SELECT menu_key FROM app_menus WHERE is_active = 1 ORDER BY sort_order ASC");
-                return $stmtAll->fetchAll(PDO::FETCH_COLUMN);
-            }
-
-            $stmtRole = $pdo->prepare("
-                SELECT am.menu_key
-                FROM role_menu_access rma
-                INNER JOIN roles r ON r.id = rma.role_id
-                INNER JOIN app_menus am ON am.id = rma.menu_id
-                WHERE r.role_key = ? AND am.is_active = 1
-                ORDER BY am.sort_order ASC
-            ");
-            $stmtRole->execute([$roleKey]);
-            $roleKeys = $stmtRole->fetchAll(PDO::FETCH_COLUMN);
-
-            // Auto-seed ke user_menu_access agar request selanjutnya lebih cepat
-            if (!empty($roleKeys)) {
-                try {
-                    $stmtInsert = $pdo->prepare("
-                        INSERT IGNORE INTO user_menu_access (user_id, menu_id)
-                        SELECT ?, rma.menu_id
-                        FROM role_menu_access rma
-                        INNER JOIN roles r ON r.id = rma.role_id
-                        WHERE r.role_key = ?
-                    ");
-                    $stmtInsert->execute([$userId, $roleKey]);
-                } catch (Exception $e) {
-                    // Ignore insert duplicate
-                }
-            }
-
-            return $roleKeys;
-        }
-
-        return [];
-    }
-}
-
-/**
  * Dipanggil setelah login ATAU setelah Super Admin mengubah hak akses user.
- * Mengisi $_SESSION['menu_keys'] dengan daftar menu_key yang diizinkan.
+ * Mengisi $_SESSION['roles'], $_SESSION['menu_keys'], dan $_SESSION['menu_permissions'].
  */
 if (!function_exists('loadUserPermissions')) {
     function loadUserPermissions(PDO $pdo, int $userId): void
@@ -133,18 +67,109 @@ if (!function_exists('loadUserPermissions')) {
             session_start();
         }
 
-        $role = $_SESSION['role'] ?? '';
+        // Ambil info primary role
+        $stmtUser = $pdo->prepare("SELECT role, name, username FROM users WHERE id = ?");
+        $stmtUser->execute([$userId]);
+        $uData = $stmtUser->fetch(PDO::FETCH_ASSOC);
+        $primaryRole = $uData['role'] ?? 'staff';
+        $_SESSION['role'] = $primaryRole;
 
-        // Super Admin: akses ke semua menu aktif
-        if ($role === 'super_admin') {
-            $stmt = $pdo->query("
-                SELECT menu_key FROM app_menus WHERE is_active = 1 ORDER BY sort_order ASC
-            ");
-            $_SESSION['menu_keys'] = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        // Ambil seluruh role keys dan role names dari user_roles (Multi-Role)
+        $stmtRoles = $pdo->prepare("
+            SELECT r.id, r.role_key, r.role_name, ur.is_primary
+            FROM user_roles ur
+            INNER JOIN roles r ON r.id = ur.role_id
+            WHERE ur.user_id = ?
+            ORDER BY ur.is_primary DESC, r.id ASC
+        ");
+        $stmtRoles->execute([$userId]);
+        $assignedRoles = $stmtRoles->fetchAll(PDO::FETCH_ASSOC);
+
+        $roleKeys = [];
+        $roleNames = [];
+        foreach ($assignedRoles as $ar) {
+            $roleKeys[] = $ar['role_key'];
+            $roleNames[] = $ar['role_name'];
+        }
+        if (!in_array($primaryRole, $roleKeys, true)) {
+            $roleKeys[] = $primaryRole;
+        }
+
+        $_SESSION['roles'] = array_values(array_unique($roleKeys));
+        $_SESSION['role_names'] = array_values(array_unique($roleNames));
+
+        // Jika user adalah super_admin, berikan full akses ke seluruh menu dengan Full CRUD
+        if ($primaryRole === 'super_admin' || in_array('super_admin', $roleKeys, true)) {
+            $stmtAll = $pdo->query("SELECT menu_key FROM app_menus WHERE is_active = 1 ORDER BY sort_order ASC");
+            $allKeys = $stmtAll->fetchAll(PDO::FETCH_COLUMN);
+            $_SESSION['menu_keys'] = $allKeys;
+            $_SESSION['menu_permissions'] = [];
+            foreach ($allKeys as $mk) {
+                $_SESSION['menu_permissions'][$mk] = ['read' => 1, 'create' => 1, 'edit' => 1, 'delete' => 1];
+            }
             return;
         }
 
-        $_SESSION['menu_keys'] = getUserMenuKeys($pdo, $userId);
+        // Hitung Additive Union Permissions dari:
+        // 1. Seluruh role_menu_access untuk semua role yang dimiliki user
+        // 2. user_menu_access custom overrides
+        $sql = "
+            SELECT 
+                am.menu_key,
+                GREATEST(COALESCE(MAX(uma.can_read), 0), COALESCE(MAX(rma.can_read), 0)) as can_read,
+                GREATEST(COALESCE(MAX(uma.can_create), 0), COALESCE(MAX(rma.can_create), 0)) as can_create,
+                GREATEST(COALESCE(MAX(uma.can_edit), 0), COALESCE(MAX(rma.can_edit), 0)) as can_edit,
+                GREATEST(COALESCE(MAX(uma.can_delete), 0), COALESCE(MAX(rma.can_delete), 0)) as can_delete
+            FROM app_menus am
+            LEFT JOIN user_menu_access uma 
+                ON uma.menu_id = am.id AND uma.user_id = ?
+            LEFT JOIN user_roles ur 
+                ON ur.user_id = ?
+            LEFT JOIN roles r_ur 
+                ON r_ur.id = ur.role_id
+            LEFT JOIN users u 
+                ON u.id = ?
+            LEFT JOIN roles r_primary 
+                ON r_primary.role_key = u.role
+            LEFT JOIN role_menu_access rma 
+                ON rma.menu_id = am.id AND (rma.role_id = ur.role_id OR rma.role_id = r_primary.id)
+            WHERE am.is_active = 1
+            GROUP BY am.id, am.menu_key, am.sort_order
+            HAVING can_read > 0 OR can_create > 0 OR can_edit > 0 OR can_delete > 0
+            ORDER BY am.sort_order ASC
+        ";
+        $stmtPerms = $pdo->prepare($sql);
+        $stmtPerms->execute([$userId, $userId, $userId]);
+        $rows = $stmtPerms->fetchAll(PDO::FETCH_ASSOC);
+
+        $allowedMenuKeys = [];
+        $menuPermissions = [];
+        foreach ($rows as $row) {
+            $mKey = $row['menu_key'];
+            if ((int)$row['can_read'] > 0) {
+                $allowedMenuKeys[] = $mKey;
+            }
+            $menuPermissions[$mKey] = [
+                'read'   => (int)$row['can_read'],
+                'create' => (int)$row['can_create'],
+                'edit'   => (int)$row['can_edit'],
+                'delete' => (int)$row['can_delete'],
+            ];
+        }
+
+        $_SESSION['menu_keys'] = array_values(array_unique($allowedMenuKeys));
+        $_SESSION['menu_permissions'] = $menuPermissions;
+    }
+}
+
+/**
+ * Ambil semua menu_key yang boleh diakses oleh $userId dari DB.
+ */
+if (!function_exists('getUserMenuKeys')) {
+    function getUserMenuKeys(PDO $pdo, int $userId): array
+    {
+        loadUserPermissions($pdo, $userId);
+        return $_SESSION['menu_keys'] ?? [];
     }
 }
 
@@ -1562,4 +1587,4 @@ if (!function_exists('getMentorAllAccountIds')) {
 
         return array_values(array_unique(array_map('intval', $ids)));
     }
-}
+}
