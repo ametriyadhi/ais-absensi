@@ -18,11 +18,12 @@ $currentRole = currentRole();
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
-    // 1. TAMBAH JADWAL BARU
+    // 1. TAMBAH JADWAL
     if ($action === 'add_schedule') {
         $typeId = (int)($_POST['type_id'] ?? 1);
         $teacherId = (int)($_POST['teacher_id'] ?? 0);
-        $observerId = (int)($_POST['observer_id'] ?? 0);
+        $canChooseObserver = in_array($currentRole, ['super_admin', 'admin', 'kepala_sekolah'], true);
+        $observerId = $canChooseObserver ? (int)($_POST['observer_id'] ?? $currentUserId) : $currentUserId;
         $subjectName = trim($_POST['subject_name'] ?? '');
         $className = trim($_POST['class_name'] ?? '');
         $schedDate = trim($_POST['scheduled_date'] ?? '');
@@ -84,15 +85,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // =========================================================================
-// QUERY DATA TAMPILAN
+// QUERY DATA TAMPILAN & SCOPING UNIT
 // =========================================================================
+$userUnit = getUserUnitInfo($pdo, $currentUserId);
+$userUnitId = $userUnit['unit_id'] ?? null;
+$userUnitName = $userUnit['unit_name'] ?? null;
+
+$isSuperAdmin = ($currentRole === 'super_admin');
+$canChooseObserver = in_array($currentRole, ['super_admin', 'admin', 'kepala_sekolah'], true);
+
 $search = trim($_GET['search'] ?? '');
 $filterType = (int)($_GET['type_id'] ?? 0);
+$filterUnit = (int)($_GET['unit_id'] ?? 0);
 
 $query = "
     SELECT ss.*, 
            st.name as type_name, st.type_key,
-           s.name as teacher_name, s.nik as teacher_nik,
+           s.name as teacher_name, s.nik as teacher_nik, s.unit_id as teacher_unit_id,
            u.name as observer_name
     FROM supervision_schedules ss
     JOIN supervision_types st ON st.id = ss.type_id
@@ -101,6 +110,16 @@ $query = "
     WHERE 1=1
 ";
 $params = [];
+
+if (!$isSuperAdmin && $userUnitId > 0) {
+    // Non-super_admin: hanya jadwal unitnya atau di mana dia observer/guru
+    $query .= " AND (s.unit_id = ? OR ss.observer_id = ?)";
+    $params[] = $userUnitId;
+    $params[] = $currentUserId;
+} elseif ($isSuperAdmin && $filterUnit > 0) {
+    $query .= " AND s.unit_id = ?";
+    $params[] = $filterUnit;
+}
 
 if ($filterType > 0) {
     $query .= " AND ss.type_id = ?";
@@ -119,10 +138,12 @@ $stmtSchedules = $pdo->prepare($query);
 $stmtSchedules->execute($params);
 $schedules = $stmtSchedules->fetchAll(PDO::FETCH_ASSOC);
 
-// Master Data untuk Dropdown Form
+// Master Data untuk Dropdown Form & Filter
 $types = $pdo->query("SELECT id, name, type_key FROM supervision_types WHERE is_active = 1 ORDER BY sort_order ASC")->fetchAll(PDO::FETCH_ASSOC);
-$teachers = $pdo->query("SELECT id, name, nik FROM staff WHERE deleted_at IS NULL ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-$observers = $pdo->query("SELECT id, name, username, role FROM users WHERE deleted_at IS NULL ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$unitsList = $pdo->query("SELECT id, unit FROM units WHERE id IN (1, 2, 3, 7) ORDER BY id ASC")->fetchAll(PDO::FETCH_ASSOC);
+
+$teachers = getSupervisionTeachers($pdo, $userUnitId);
+$observers = getSupervisionObservers($pdo, $userUnitId);
 
 $mapelList = [
     "Pendidikan Agama Islam / Al-Qur'an",
@@ -160,7 +181,7 @@ require_once __DIR__ . '/../../includes/header.php';
                 <span style="background: #e0f2fe; color: #0369a1; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 6px; text-transform: uppercase;">
                     <i class="fa-solid fa-calendar-days"></i> Manajemen Waktu
                 </span>
-                <span style="color: #94a3b8; font-size: 13px;">&bull; SMP An Nahl Islamic School</span>
+                <span style="color: #94a3b8; font-size: 13px;">&bull; <?= $userUnitName ? 'Unit ' . htmlspecialchars($userUnitName) : 'Seluruh Unit Sekolah' ?> &bull; An Nahl Islamic School</span>
             </div>
             <h1 style="margin: 0; font-size: 24px; font-weight: 800; color: #0f172a;">
                 Jadwal Supervisi Sekolah
@@ -195,6 +216,19 @@ require_once __DIR__ . '/../../includes/header.php';
                     <?php endforeach; ?>
                 </select>
             </div>
+
+            <?php if ($isSuperAdmin): ?>
+                <div style="width: 170px;">
+                    <select name="unit_id" class="form-control" onchange="this.form.submit()">
+                        <option value="0">-- Semua Unit --</option>
+                        <?php foreach ($unitsList as $un): ?>
+                            <option value="<?= $un['id'] ?>" <?= ($filterUnit == $un['id']) ? 'selected' : '' ?>>
+                                Unit <?= htmlspecialchars($un['unit']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            <?php endif; ?>
 
             <button type="submit" class="btn btn-secondary">
                 <i class="fa-solid fa-filter"></i> Filter
@@ -334,22 +368,53 @@ require_once __DIR__ . '/../../includes/header.php';
 
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px;">
                     <div>
-                        <label style="display: block; font-size: 13px; font-weight: 700; margin-bottom: 6px; color: #334155;">Guru yang Dinilai *</label>
+                        <label style="display: block; font-size: 13px; font-weight: 700; margin-bottom: 6px; color: #334155;">
+                            Guru yang Dinilai *
+                            <?php if ($userUnitName): ?>
+                                <span style="font-size: 10.5px; font-weight: 600; color: #0284c7; background: #e0f2fe; padding: 1px 5px; border-radius: 4px; margin-left: 2px;">
+                                    Unit <?= htmlspecialchars($userUnitName) ?>
+                                </span>
+                            <?php endif; ?>
+                        </label>
                         <select name="teacher_id" id="schedTeacherSelect" class="form-control" required>
                             <option value="">-- Pilih Guru --</option>
-                            <?php foreach ($teachers as $tc): ?>
-                                <option value="<?= $tc['id'] ?>"><?= htmlspecialchars($tc['name']) ?></option>
-                            <?php endforeach; ?>
+                            <?php if ($isSuperAdmin && empty($userUnitId)): ?>
+                                <?php 
+                                $groupedTeachers = [];
+                                foreach ($teachers as $tc) {
+                                    $uName = $tc['unit_name'] ?: 'Lainnya';
+                                    $groupedTeachers[$uName][] = $tc;
+                                }
+                                foreach ($groupedTeachers as $uLabel => $tList): ?>
+                                    <optgroup label="Unit <?= htmlspecialchars($uLabel) ?>">
+                                        <?php foreach ($tList as $tc): ?>
+                                            <option value="<?= $tc['id'] ?>"><?= htmlspecialchars($tc['name']) ?></option>
+                                        <?php endforeach; ?>
+                                    </optgroup>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <?php foreach ($teachers as $tc): ?>
+                                    <option value="<?= $tc['id'] ?>"><?= htmlspecialchars($tc['name']) ?></option>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </select>
                     </div>
                     <div>
                         <label style="display: block; font-size: 13px; font-weight: 700; margin-bottom: 6px; color: #334155;">Guru Observer *</label>
-                        <select name="observer_id" id="schedObserverSelect" class="form-control" required>
-                            <option value="">-- Pilih Observer --</option>
-                            <?php foreach ($observers as $ob): ?>
-                                <option value="<?= $ob['id'] ?>"><?= htmlspecialchars($ob['name']) ?> (<?= htmlspecialchars($ob['role']) ?>)</option>
-                            <?php endforeach; ?>
-                        </select>
+                        <?php if ($canChooseObserver): ?>
+                            <select name="observer_id" id="schedObserverSelect" class="form-control" required>
+                                <option value="">-- Pilih Observer --</option>
+                                <?php foreach ($observers as $ob): ?>
+                                    <option value="<?= $ob['id'] ?>"><?= htmlspecialchars($ob['name']) ?> (<?= htmlspecialchars($ob['role']) ?><?= !empty($ob['unit_name']) ? ' - ' . $ob['unit_name'] : '' ?>)</option>
+                                <?php endforeach; ?>
+                            </select>
+                        <?php else: ?>
+                            <input type="hidden" name="observer_id" id="schedObserverSelect" value="<?= $currentUserId ?>">
+                            <div class="form-control" style="background: #f8fafc; font-weight: 700; color: #1e293b; display: flex; align-items: center; justify-content: space-between; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 10px 14px;">
+                                <span><i class="fa-solid fa-user-check" style="color: #10b981; margin-right: 6px;"></i> <?= htmlspecialchars($_SESSION['name'] ?? 'Akun Anda') ?></span>
+                                <span class="badge" style="background: #e0e7ff; color: #4338ca; font-size: 10px; padding: 2px 6px; border-radius: 4px;">Akun Anda</span>
+                            </div>
+                        <?php endif; ?>
                     </div>
                 </div>
 

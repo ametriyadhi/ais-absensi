@@ -331,6 +331,128 @@ if (!function_exists('canExecuteQuickAttendance')) {
 }
 
 // =========================================================================
+// SUPERVISI PEMBELAJARAN (KURMAA) — SCOPING UNIT & ELIGIBLE USERS/STAFF
+// =========================================================================
+
+if (!function_exists('getUserUnitInfo')) {
+    function getUserUnitInfo(PDO $pdo, ?int $userId = null): array {
+        $uid = $userId !== null ? $userId : (int)($_SESSION['user_id'] ?? 0);
+        if ($uid <= 0) return ['unit_id' => null, 'unit_name' => null];
+
+        $sql = '
+            SELECT u.id as unit_id, u.unit as unit_name
+            FROM admin_unit_permissions aup
+            JOIN units u ON u.id = aup.unit_id
+            WHERE aup.user_id = ? AND aup.unit_id IS NOT NULL
+            UNION
+            SELECT u.id as unit_id, u.unit as unit_name
+            FROM staff s
+            JOIN units u ON u.id = s.unit_id
+            WHERE s.user_id = ? AND s.unit_id IS NOT NULL
+            UNION
+            SELECT un.id as unit_id, un.unit as unit_name
+            FROM users usr
+            JOIN staff st ON st.nik = usr.username
+            JOIN units un ON un.id = st.unit_id
+            WHERE usr.id = ? AND st.unit_id IS NOT NULL
+            LIMIT 1
+        ';
+        try {
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute([$uid, $uid, $uid]);
+            $res = $stmt->fetch(PDO::FETCH_ASSOC);
+            if ($res) {
+                return ['unit_id' => (int)$res['unit_id'], 'unit_name' => $res['unit_name']];
+            }
+        } catch (Exception $e) {}
+        return ['unit_id' => null, 'unit_name' => null];
+    }
+}
+
+if (!function_exists('getSupervisionTeachers')) {
+    function getSupervisionTeachers(PDO $pdo, ?int $unitId = null, ?int $excludeUserId = null): array {
+        $where = ['s.deleted_at IS NULL', "s.name NOT IN ('absen', 'arif')", "s.nik NOT IN ('000', '0000')"];
+        $params = [];
+
+        if ($unitId !== null && $unitId > 0) {
+            $where[] = 's.unit_id = ?';
+            $params[] = $unitId;
+        } else {
+            // Hanya unit akademik (TK, SD, SMP, SMA)
+            $where[] = 's.unit_id IN (1, 2, 3, 7)';
+        }
+
+        if ($excludeUserId !== null && $excludeUserId > 0) {
+            $where[] = '(s.user_id != ? OR s.user_id IS NULL)';
+            $params[] = $excludeUserId;
+            $where[] = '(s.nik != (SELECT username FROM users WHERE id = ?) OR s.nik IS NULL)';
+            $params[] = $excludeUserId;
+        }
+
+        $whereSql = implode(' AND ', $where);
+        $sql = "
+            SELECT s.id, s.name, s.nik, s.unit_id, u.unit as unit_name
+            FROM staff s
+            LEFT JOIN units u ON u.id = s.unit_id
+            WHERE {$whereSql}
+            ORDER BY u.id ASC, s.name ASC
+        ";
+        try {
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Exception $e) {
+            return [];
+        }
+    }
+}
+
+if (!function_exists('getSupervisionObservers')) {
+    function getSupervisionObservers(PDO $pdo, ?int $unitId = null): array {
+        $where = [
+            'u.deleted_at IS NULL',
+            "u.role != 'siswa'",
+            'u.student_id IS NULL',
+            "u.name NOT IN ('absen', 'arif', 'Absen Barcode Siswa')",
+            "u.username NOT IN ('000', '0000')"
+        ];
+        $params = [];
+
+        if ($unitId !== null && $unitId > 0) {
+            $where[] = '(
+                u.role IN ("super_admin", "admin")
+                OR s.unit_id = ?
+                OR u.id IN (SELECT user_id FROM user_roles WHERE role_id IN (SELECT id FROM roles WHERE role_key = "observer"))
+            )';
+            $params[] = $unitId;
+        } else {
+            $where[] = '(
+                u.role IN ("super_admin", "admin", "kepala_sekolah")
+                OR s.unit_id IN (1, 2, 3, 7)
+                OR u.id IN (SELECT user_id FROM user_roles WHERE role_id IN (SELECT id FROM roles WHERE role_key = "observer"))
+            )';
+        }
+
+        $whereSql = implode(' AND ', $where);
+        $sql = "
+            SELECT DISTINCT u.id, u.name, u.username, u.role, un.unit as unit_name
+            FROM users u
+            LEFT JOIN staff s ON (s.user_id = u.id OR s.nik = u.username)
+            LEFT JOIN units un ON un.id = s.unit_id
+            WHERE {$whereSql}
+            ORDER BY un.id ASC, u.name ASC
+        ";
+        try {
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Exception $e) {
+            return [];
+        }
+    }
+}
+
+// =========================================================================
 // UPLOAD FOTO
 // =========================================================================
 

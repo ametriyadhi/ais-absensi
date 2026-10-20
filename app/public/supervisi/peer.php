@@ -39,7 +39,8 @@ if ($scheduleId > 0) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'save_peer_supervision') {
     $schedId = !empty($_POST['schedule_id']) ? (int)$_POST['schedule_id'] : null;
     $teacherId = (int)($_POST['teacher_id'] ?? 0);
-    $observerId = (int)($_POST['observer_id'] ?? $currentUserId);
+    $canChooseObserver = in_array($currentRole, ['super_admin', 'admin'], true);
+    $observerId = $canChooseObserver ? (int)($_POST['observer_id'] ?? $currentUserId) : $currentUserId;
     $subjectName = trim($_POST['subject_name'] ?? '');
     $className = trim($_POST['class_name'] ?? '');
     $obsDate = trim($_POST['observation_date'] ?? date('Y-m-d'));
@@ -163,13 +164,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 }
 
 // =========================================================================
-// QUERY DATA TAMPILAN INSTRUMEN
+// QUERY DATA TAMPILAN INSTRUMEN & SCOPING UNIT
 // =========================================================================
-// 1. Ambil daftar guru dari tabel staff & users
-$teachers = $pdo->query("SELECT id, name, nik FROM staff WHERE deleted_at IS NULL ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$userUnit = getUserUnitInfo($pdo, $currentUserId);
+$userUnitId = $userUnit['unit_id'] ?? null;
+$userUnitName = $userUnit['unit_name'] ?? null;
 
-// 2. Ambil daftar observer (user staff/guru/kepsek)
-$observers = $pdo->query("SELECT id, name, username, role FROM users WHERE deleted_at IS NULL ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$isSuperAdmin = ($currentRole === 'super_admin');
+$canChooseObserver = in_array($currentRole, ['super_admin', 'admin'], true);
+
+// 1. Ambil daftar guru terobservasi (scoped per unit pengguna, mengecualikan observer sendiri dan siswa)
+$teachers = getSupervisionTeachers($pdo, $userUnitId, $currentUserId);
+
+// 2. Ambil daftar observer (hanya jika super admin/admin yang berhak memilih observer lain)
+$observers = getSupervisionObservers($pdo, $userUnitId);
 
 // 3. Ambil Kategori & Butir Aktif untuk Sejawat (type_id = 1)
 $stmtCats = $pdo->prepare("SELECT * FROM supervision_categories WHERE type_id = ? AND is_active = 1 ORDER BY sort_order ASC, id ASC");
@@ -294,16 +302,41 @@ require_once __DIR__ . '/../../includes/header.php';
                 <div>
                     <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">
                         Guru yang Dinilai (Terobservasi) *
+                        <?php if ($userUnitName): ?>
+                            <span style="font-size: 11px; font-weight: 600; color: #0284c7; background: #e0f2fe; padding: 2px 6px; border-radius: 4px; margin-left: 4px;">
+                                Unit <?= htmlspecialchars($userUnitName) ?>
+                            </span>
+                        <?php endif; ?>
                     </label>
                     <select name="teacher_id" id="teacherSelect" class="form-control" required style="font-size: 13.5px; font-weight: 600;">
                         <option value="">-- Pilih Nama Guru --</option>
-                        <?php foreach ($teachers as $tc): 
-                            $isSelected = ($prefillSchedule && $prefillSchedule['teacher_id'] == $tc['id']);
-                        ?>
-                            <option value="<?= $tc['id'] ?>" <?= $isSelected ? 'selected' : '' ?>>
-                                <?= htmlspecialchars($tc['name']) ?> <?= !empty($tc['nik']) ? '(' . $tc['nik'] . ')' : '' ?>
-                            </option>
-                        <?php endforeach; ?>
+                        <?php if ($isSuperAdmin && empty($userUnitId)): ?>
+                            <?php 
+                            $groupedTeachers = [];
+                            foreach ($teachers as $tc) {
+                                $uName = $tc['unit_name'] ?: 'Lainnya';
+                                $groupedTeachers[$uName][] = $tc;
+                            }
+                            foreach ($groupedTeachers as $uLabel => $tList): ?>
+                                <optgroup label="Unit <?= htmlspecialchars($uLabel) ?>">
+                                    <?php foreach ($tList as $tc): 
+                                        $isSelected = ($prefillSchedule && $prefillSchedule['teacher_id'] == $tc['id']);
+                                    ?>
+                                        <option value="<?= $tc['id'] ?>" <?= $isSelected ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($tc['name']) ?> <?= !empty($tc['nik']) ? '(' . $tc['nik'] . ')' : '' ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </optgroup>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <?php foreach ($teachers as $tc): 
+                                $isSelected = ($prefillSchedule && $prefillSchedule['teacher_id'] == $tc['id']);
+                            ?>
+                                <option value="<?= $tc['id'] ?>" <?= $isSelected ? 'selected' : '' ?>>
+                                    <?= htmlspecialchars($tc['name']) ?> <?= !empty($tc['nik']) ? '(' . $tc['nik'] . ')' : '' ?>
+                                </option>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
                     </select>
                 </div>
 
@@ -312,15 +345,29 @@ require_once __DIR__ . '/../../includes/header.php';
                     <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">
                         Guru Observer (Penilai) *
                     </label>
-                    <select name="observer_id" id="observerSelect" class="form-control" required style="font-size: 13.5px;">
-                        <?php foreach ($observers as $ob): 
-                            $isSelected = ($prefillSchedule && $prefillSchedule['observer_id'] == $ob['id']) || (!$prefillSchedule && $ob['id'] == $currentUserId);
-                        ?>
-                            <option value="<?= $ob['id'] ?>" <?= $isSelected ? 'selected' : '' ?>>
-                                <?= htmlspecialchars($ob['name']) ?> (<?= htmlspecialchars($ob['role']) ?>)
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+                    <?php if ($canChooseObserver): ?>
+                        <select name="observer_id" id="observerSelect" class="form-control" required style="font-size: 13.5px;">
+                            <option value="">-- Pilih Observer --</option>
+                            <?php foreach ($observers as $ob): 
+                                $isSelected = ($prefillSchedule && $prefillSchedule['observer_id'] == $ob['id']) || (!$prefillSchedule && $ob['id'] == $currentUserId);
+                            ?>
+                                <option value="<?= $ob['id'] ?>" <?= $isSelected ? 'selected' : '' ?>>
+                                    <?= htmlspecialchars($ob['name']) ?> (<?= htmlspecialchars($ob['role']) ?><?= !empty($ob['unit_name']) ? ' - ' . $ob['unit_name'] : '' ?>)
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    <?php else: ?>
+                        <input type="hidden" name="observer_id" value="<?= $currentUserId ?>">
+                        <div class="form-control" style="background: #f8fafc; font-weight: 700; color: #1e293b; display: flex; align-items: center; justify-content: space-between; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 10px 14px;">
+                            <span>
+                                <i class="fa-solid fa-user-check" style="color: #10b981; margin-right: 6px;"></i> 
+                                <?= htmlspecialchars($_SESSION['name'] ?? 'Akun Anda') ?>
+                            </span>
+                            <span class="badge" style="background: #e0e7ff; color: #4338ca; font-size: 11px; padding: 3px 8px; border-radius: 4px;">
+                                Akun Anda (Observer)
+                            </span>
+                        </div>
+                    <?php endif; ?>
                 </div>
 
                 <!-- MATA PELAJARAN -->

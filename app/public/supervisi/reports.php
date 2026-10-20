@@ -12,6 +12,12 @@ $pageTitle = 'Rekapitulasi Data Supervisi Guru';
 $currentUserId = currentUserId();
 $currentRole = currentRole();
 
+$userUnit = getUserUnitInfo($pdo, $currentUserId);
+$userUnitId = $userUnit['unit_id'] ?? null;
+$userUnitName = $userUnit['unit_name'] ?? null;
+$isSuperAdmin = ($currentRole === 'super_admin');
+$filterUnit = (int)($_GET['unit_id'] ?? 0);
+
 // =========================================================================
 // ACTION: EKSPOR EXCEL & BACKUP JSON
 // =========================================================================
@@ -19,14 +25,25 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     header('Content-Type: application/vnd.ms-excel; charset=utf-8');
     header('Content-Disposition: attachment; filename=Rekap_Supervisi_Guru_' . date('Ymd_His') . '.xls');
     
-    $stmtExp = $pdo->query("
+    $expQuery = "
         SELECT ss.*, st.name as type_name, s.name as teacher_name, u.name as observer_name
         FROM supervision_sessions ss
         JOIN supervision_types st ON st.id = ss.type_id
         JOIN staff s ON s.id = ss.teacher_id
         JOIN users u ON u.id = ss.observer_id
-        ORDER BY ss.observation_date DESC, ss.id DESC
-    ");
+        WHERE 1=1
+    ";
+    $expParams = [];
+    if (!$isSuperAdmin && $userUnitId > 0) {
+        $expQuery .= " AND s.unit_id = ?";
+        $expParams[] = $userUnitId;
+    } elseif ($isSuperAdmin && $filterUnit > 0) {
+        $expQuery .= " AND s.unit_id = ?";
+        $expParams[] = $filterUnit;
+    }
+    $expQuery .= " ORDER BY ss.observation_date DESC, ss.id DESC";
+    $stmtExp = $pdo->prepare($expQuery);
+    $stmtExp->execute($expParams);
     $expRows = $stmtExp->fetchAll(PDO::FETCH_ASSOC);
 
     echo "<table border='1'>";
@@ -199,6 +216,14 @@ if ($filterType > 0) {
     $params[] = $filterType;
 }
 
+if (!$isSuperAdmin && $userUnitId > 0) {
+    $query .= " AND s.unit_id = ?";
+    $params[] = $userUnitId;
+} elseif ($isSuperAdmin && $filterUnit > 0) {
+    $query .= " AND s.unit_id = ?";
+    $params[] = $filterUnit;
+}
+
 if (!empty($filterPred)) {
     $query .= " AND ss.predicate_name = ?";
     $params[] = $filterPred;
@@ -219,6 +244,7 @@ $sessions = $stmtSessions->fetchAll(PDO::FETCH_ASSOC);
 // Predikat List & Types List
 $predicates = $pdo->query("SELECT * FROM supervision_predicates ORDER BY min_percentage DESC")->fetchAll(PDO::FETCH_ASSOC);
 $types = $pdo->query("SELECT * FROM supervision_types WHERE is_active = 1 ORDER BY sort_order ASC")->fetchAll(PDO::FETCH_ASSOC);
+$unitsList = $pdo->query("SELECT id, unit FROM units WHERE id IN (1, 2, 3, 7) ORDER BY id ASC")->fetchAll(PDO::FETCH_ASSOC);
 
 function getPredicateColor($predName) {
     switch (strtolower($predName)) {
@@ -240,7 +266,7 @@ require_once __DIR__ . '/../../includes/header.php';
                 <span style="background: #e0f2fe; color: #0369a1; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 6px; text-transform: uppercase;">
                     <i class="fa-solid fa-table-list"></i> Arsip Dokumen Evaluasi
                 </span>
-                <span style="color: #94a3b8; font-size: 13px;">&bull; SMP An Nahl Islamic School</span>
+                <span style="color: #94a3b8; font-size: 13px;">&bull; <?= $userUnitName ? 'Unit ' . htmlspecialchars($userUnitName) : 'Seluruh Unit Sekolah' ?> &bull; An Nahl Islamic School</span>
             </div>
             <h1 style="margin: 0; font-size: 24px; font-weight: 800; color: #0f172a;">
                 Rekapitulasi Data Supervisi Guru
@@ -303,6 +329,19 @@ require_once __DIR__ . '/../../includes/header.php';
                     <?php endforeach; ?>
                 </select>
             </div>
+
+            <?php if ($isSuperAdmin): ?>
+                <div style="width: 170px;">
+                    <select name="unit_id" class="form-control" onchange="this.form.submit()">
+                        <option value="0">-- Semua Unit --</option>
+                        <?php foreach ($unitsList as $un): ?>
+                            <option value="<?= $un['id'] ?>" <?= ($filterUnit == $un['id']) ? 'selected' : '' ?>>
+                                Unit <?= htmlspecialchars($un['unit']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            <?php endif; ?>
 
             <button type="submit" class="btn btn-secondary">
                 <i class="fa-solid fa-filter"></i> Filter
