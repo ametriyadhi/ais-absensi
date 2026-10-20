@@ -624,12 +624,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('index.php?tab=users');
     }
 
-    // 7. TAMBAH USER BARU
+    // 7. TAMBAH USER BARU (DENGAN DUKUNGAN MULTI-ROLE)
     if ($action === 'add_user') {
         $name = trim($_POST['name'] ?? '');
         $username = trim($_POST['username'] ?? '');
         $password = $_POST['password'] ?? '';
-        $role = trim($_POST['role'] ?? 'staff');
+        $selectedRoleIds = array_map('intval', $_POST['role_ids'] ?? []);
+        $primaryRoleId = (int)($_POST['primary_role_id'] ?? 0);
+
+        if (empty($selectedRoleIds) && !empty($_POST['role'])) {
+            $stmtR = $pdo->prepare("SELECT id FROM roles WHERE role_key = ? LIMIT 1");
+            $stmtR->execute([$_POST['role']]);
+            $rid = (int)$stmtR->fetchColumn();
+            if ($rid > 0) {
+                $selectedRoleIds = [$rid];
+                $primaryRoleId = $rid;
+            }
+        }
+
+        if (empty($selectedRoleIds)) {
+            $stmtDef = $pdo->query("SELECT id FROM roles WHERE role_key = 'staff' LIMIT 1");
+            $defId = (int)$stmtDef->fetchColumn();
+            $selectedRoleIds = [$defId];
+            $primaryRoleId = $defId;
+        }
+
+        if (!in_array($primaryRoleId, $selectedRoleIds, true)) {
+            $primaryRoleId = $selectedRoleIds[0];
+        }
+
+        $stmtP = $pdo->prepare("SELECT role_key FROM roles WHERE id = ?");
+        $stmtP->execute([$primaryRoleId]);
+        $primaryRoleKey = $stmtP->fetchColumn() ?: 'staff';
 
         if ($name === '' || $username === '' || $password === '') {
             flash('error', 'Nama, Username, dan Password wajib diisi.');
@@ -643,31 +669,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 try {
                     $hash = hashPassword($password);
                     $stmt = $pdo->prepare("INSERT INTO users (name, username, password, role) VALUES (?, ?, ?, ?)");
-                    $stmt->execute([$name, $username, $hash, $role]);
+                    $stmt->execute([$name, $username, $hash, $primaryRoleKey]);
                     $newUserId = (int)$pdo->lastInsertId();
 
-                    // Copy default permissions dari role ke user_menu_access
-                    $stmtRoleAccess = $pdo->prepare("
-                        SELECT rma.menu_id 
-                        FROM role_menu_access rma 
-                        INNER JOIN roles r ON r.id = rma.role_id 
-                        WHERE r.role_key = ?
-                    ");
-                    $stmtRoleAccess->execute([$role]);
-                    $defaultMenuIds = $stmtRoleAccess->fetchAll(PDO::FETCH_COLUMN);
+                    // Simpan ke user_roles
+                    $stmtInsertUR = $pdo->prepare("INSERT INTO user_roles (user_id, role_id, is_primary) VALUES (?, ?, ?)");
+                    foreach ($selectedRoleIds as $rid) {
+                        $isPri = ($rid === $primaryRoleId) ? 1 : 0;
+                        $stmtInsertUR->execute([$newUserId, $rid, $isPri]);
+                    }
 
-                    if (!empty($defaultMenuIds)) {
-                        $stmtUserMenu = $pdo->prepare("INSERT INTO user_menu_access (user_id, menu_id) VALUES (?, ?)");
-                        foreach ($defaultMenuIds as $mid) {
-                            $stmtUserMenu->execute([$newUserId, $mid]);
+                    // Copy default permissions dari seluruh selected roles (Additive Union)
+                    $placeholders = implode(',', array_fill(0, count($selectedRoleIds), '?'));
+                    $stmtRoleAccess = $pdo->prepare("
+                        SELECT menu_id, 
+                               MAX(can_read) as can_read, 
+                               MAX(can_create) as can_create, 
+                               MAX(can_edit) as can_edit, 
+                               MAX(can_delete) as can_delete
+                        FROM role_menu_access 
+                        WHERE role_id IN ($placeholders)
+                        GROUP BY menu_id
+                    ");
+                    $stmtRoleAccess->execute($selectedRoleIds);
+                    $roleAccessList = $stmtRoleAccess->fetchAll(PDO::FETCH_ASSOC);
+
+                    if (!empty($roleAccessList)) {
+                        $stmtUserMenu = $pdo->prepare("
+                            INSERT INTO user_menu_access (user_id, menu_id, can_read, can_create, can_edit, can_delete) 
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        ");
+                        foreach ($roleAccessList as $ra) {
+                            $stmtUserMenu->execute([
+                                $newUserId, 
+                                (int)$ra['menu_id'], 
+                                (int)$ra['can_read'], 
+                                (int)$ra['can_create'], 
+                                (int)$ra['can_edit'], 
+                                (int)$ra['can_delete']
+                            ]);
                         }
                     }
 
                     $pdo->commit();
+                    refreshUserPermissions($pdo, $newUserId);
                     if (function_exists('recordActivityAudit')) {
-                        recordActivityAudit($pdo, 'access_control', 'CREATE', 'users', $newUserId, "Tambah Pengguna Baru: {$name} ({$username}) - Role: {$role}");
+                        recordActivityAudit($pdo, 'access_control', 'CREATE', 'users', $newUserId, "Tambah Pengguna Baru: {$name} ({$username}) - Primary: {$primaryRoleKey}");
                     }
-                    flash('success', 'Pengguna baru berhasil ditambahkan beserta hak akses default role!');
+                    flash('success', 'Pengguna baru berhasil ditambahkan beserta multi-role & hak akses default!');
                 } catch (Exception $e) {
                     if ($pdo->inTransaction()) $pdo->rollBack();
                     flash('error', 'Terjadi kesalahan: ' . $e->getMessage());
@@ -677,13 +726,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('index.php?tab=users');
     }
 
-    // 8. EDIT USER TUNGGAL LENGKAP
+    // 8. EDIT USER TUNGGAL LENGKAP (DENGAN DUKUNGAN MULTI-ROLE)
     if ($action === 'edit_user') {
         $uid = (int)($_POST['user_id'] ?? 0);
         $name = trim($_POST['name'] ?? '');
         $username = trim($_POST['username'] ?? '');
         $password = $_POST['password'] ?? '';
-        $role = trim($_POST['role'] ?? 'staff');
+        $selectedRoleIds = array_map('intval', $_POST['role_ids'] ?? []);
+        $primaryRoleId = (int)($_POST['primary_role_id'] ?? 0);
+
+        if (empty($selectedRoleIds) && !empty($_POST['role'])) {
+            $stmtR = $pdo->prepare("SELECT id FROM roles WHERE role_key = ? LIMIT 1");
+            $stmtR->execute([$_POST['role']]);
+            $rid = (int)$stmtR->fetchColumn();
+            if ($rid > 0) {
+                $selectedRoleIds = [$rid];
+                $primaryRoleId = $rid;
+            }
+        }
 
         if ($uid > 0 && $name !== '' && $username !== '') {
             $stmtCek = $pdo->prepare("SELECT id FROM users WHERE username = ? AND id != ? LIMIT 1");
@@ -691,18 +751,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($stmtCek->fetch()) {
                 flash('error', 'Username sudah dipakai oleh pengguna lain.');
             } else {
-                if (!empty($password)) {
-                    $hash = hashPassword($password);
-                    $stmt = $pdo->prepare("UPDATE users SET name = ?, username = ?, role = ?, password = ? WHERE id = ?");
-                    $stmt->execute([$name, $username, $role, $hash, $uid]);
-                } else {
-                    $stmt = $pdo->prepare("UPDATE users SET name = ?, username = ?, role = ? WHERE id = ?");
-                    $stmt->execute([$name, $username, $role, $uid]);
+                $pdo->beginTransaction();
+                try {
+                    $primaryRoleKey = null;
+                    if (!empty($selectedRoleIds)) {
+                        if (!in_array($primaryRoleId, $selectedRoleIds, true)) {
+                            $primaryRoleId = $selectedRoleIds[0];
+                        }
+
+                        $stmtP = $pdo->prepare("SELECT role_key FROM roles WHERE id = ?");
+                        $stmtP->execute([$primaryRoleId]);
+                        $primaryRoleKey = $stmtP->fetchColumn() ?: 'staff';
+
+                        // Proteksi self-demote super_admin
+                        if ($uid === $currentUserId && $primaryRoleKey !== 'super_admin') {
+                            $stmtSA = $pdo->query("SELECT id FROM roles WHERE role_key = 'super_admin' LIMIT 1");
+                            $saId = (int)$stmtSA->fetchColumn();
+                            if (!in_array($saId, $selectedRoleIds, true)) {
+                                throw new Exception('Anda tidak dapat menghapus wewenang Super Admin dari akun Anda sendiri.');
+                            }
+                        }
+
+                        // Update user_roles
+                        $pdo->prepare("DELETE FROM user_roles WHERE user_id = ?")->execute([$uid]);
+                        $stmtInsertUR = $pdo->prepare("INSERT INTO user_roles (user_id, role_id, is_primary) VALUES (?, ?, ?)");
+                        foreach ($selectedRoleIds as $rid) {
+                            $isPri = ($rid === $primaryRoleId) ? 1 : 0;
+                            $stmtInsertUR->execute([$uid, $rid, $isPri]);
+                        }
+                    }
+
+                    if (!empty($password)) {
+                        $hash = hashPassword($password);
+                        if ($primaryRoleKey) {
+                            $stmt = $pdo->prepare("UPDATE users SET name = ?, username = ?, role = ?, password = ? WHERE id = ?");
+                            $stmt->execute([$name, $username, $primaryRoleKey, $hash, $uid]);
+                        } else {
+                            $stmt = $pdo->prepare("UPDATE users SET name = ?, username = ?, password = ? WHERE id = ?");
+                            $stmt->execute([$name, $username, $hash, $uid]);
+                        }
+                    } else {
+                        if ($primaryRoleKey) {
+                            $stmt = $pdo->prepare("UPDATE users SET name = ?, username = ?, role = ? WHERE id = ?");
+                            $stmt->execute([$name, $username, $primaryRoleKey, $uid]);
+                        } else {
+                            $stmt = $pdo->prepare("UPDATE users SET name = ?, username = ? WHERE id = ?");
+                            $stmt->execute([$name, $username, $uid]);
+                        }
+                    }
+
+                    $pdo->commit();
+                    refreshUserPermissions($pdo, $uid);
+                    if (function_exists('recordActivityAudit')) {
+                        recordActivityAudit($pdo, 'access_control', 'UPDATE', 'users', $uid, "Ubah Data Pengguna & Multi-Role #{$uid}: {$name} ({$username})");
+                    }
+                    flash('success', 'Data pengguna & multi-role berhasil diperbarui.');
+                } catch (Exception $e) {
+                    if ($pdo->inTransaction()) $pdo->rollBack();
+                    flash('error', 'Gagal memperbarui data pengguna: ' . $e->getMessage());
                 }
-                if (function_exists('recordActivityAudit')) {
-                    recordActivityAudit($pdo, 'access_control', 'UPDATE', 'users', $uid, "Ubah Data Pengguna #{$uid}: {$name} ({$username})");
-                }
-                flash('success', 'Data pengguna berhasil diperbarui.');
             }
         }
         redirect('index.php?tab=users');
@@ -2612,7 +2719,7 @@ input[type="checkbox"].crud-row-all {
 <!-- MODAL: TAMBAH USER BARU -->
 <!-- ========================================================================= -->
 <div id="modalAddUser" class="custom-modal-overlay">
-    <div class="custom-modal-box" style="max-width: 520px;">
+    <div class="custom-modal-box" style="max-width: 620px;">
         <div class="custom-modal-header">
             <h3 style="margin: 0; font-size: 18px; color: #0f172a;">
                 <i class="fa-solid fa-user-plus" style="color: var(--primary); margin-right: 8px;"></i>
@@ -2626,36 +2733,60 @@ input[type="checkbox"].crud-row-all {
         <form method="POST">
             <input type="hidden" name="action" value="add_user">
             <div class="custom-modal-body">
-                <div class="form-group" style="margin-bottom: 16px;">
+                <div class="form-group" style="margin-bottom: 14px;">
                     <label style="display: block; font-weight: 600; margin-bottom: 6px;">Nama Lengkap *</label>
                     <input type="text" name="name" required placeholder="Contoh: Budi Santoso, S.Kom"
                            style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box;">
                 </div>
 
-                <div class="form-group" style="margin-bottom: 16px;">
-                    <label style="display: block; font-weight: 600; margin-bottom: 6px;">Username *</label>
-                    <input type="text" name="username" required placeholder="Contoh: budi_santoso"
-                           style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px;">
+                    <div class="form-group">
+                        <label style="display: block; font-weight: 600; margin-bottom: 6px;">Username *</label>
+                        <input type="text" name="username" required placeholder="Contoh: budi_santoso"
+                               style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box;">
+                    </div>
+                    <div class="form-group">
+                        <label style="display: block; font-weight: 600; margin-bottom: 6px;">Password *</label>
+                        <input type="password" name="password" required placeholder="Minimal 6 karakter"
+                               style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box;">
+                    </div>
                 </div>
 
-                <div class="form-group" style="margin-bottom: 16px;">
-                    <label style="display: block; font-weight: 600; margin-bottom: 6px;">Password *</label>
-                    <input type="password" name="password" required placeholder="Minimal 6 karakter"
-                           style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box;">
-                </div>
+                <div class="form-group" style="margin-bottom: 14px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <label style="font-weight: 600; margin: 0; color: #1e293b; font-size: 13.5px;">
+                            <i class="fa-solid fa-users-gear" style="color: var(--primary); margin-right: 4px;"></i>
+                            Pilih Role (Bisa lebih dari satu role) *
+                        </label>
+                        <span style="font-size: 11px; color: #64748b; font-weight: 600;">
+                            <i class="fa-solid fa-star" style="color: #10b981;"></i> Tandai Role Utama
+                        </span>
+                    </div>
 
-                <div class="form-group" style="margin-bottom: 16px;">
-                    <label style="display: block; font-weight: 600; margin-bottom: 6px;">Pilih Role *</label>
-                    <select name="role" required style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box;">
+                    <div style="max-height: 200px; overflow-y: auto; border: 1.5px solid #cbd5e1; border-radius: 10px; padding: 8px; background: #f8fafc; display: flex; flex-direction: column; gap: 6px;">
                         <?php foreach ($roles as $r): ?>
-                            <option value="<?= htmlspecialchars($r['role_key']) ?>">
-                                <?= htmlspecialchars($r['role_name']) ?> (<?= htmlspecialchars($r['role_key']) ?>)
-                            </option>
+                            <?php $isStaff = ($r['role_key'] === 'staff'); ?>
+                            <div class="add-role-card" id="add_role_card_<?= $r['id'] ?>" style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; transition: all 0.15s;">
+                                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; margin: 0; flex: 1;">
+                                    <input type="checkbox" name="role_ids[]" value="<?= $r['id'] ?>" class="add-user-role-chk" id="aur_chk_<?= $r['id'] ?>" <?= $isStaff ? 'checked' : '' ?> onchange="onAddUserRoleChange(<?= $r['id'] ?>)">
+                                    <div>
+                                        <div style="font-weight: 700; font-size: 13px; color: #1e293b;">
+                                            <?= htmlspecialchars($r['role_name']) ?>
+                                            <code style="font-size: 11px; color: #64748b;">(<?= htmlspecialchars($r['role_key']) ?>)</code>
+                                        </div>
+                                    </div>
+                                </label>
+                                <div>
+                                    <label class="primary-radio-label" title="Jadikan role utama">
+                                        <input type="radio" name="primary_role_id" value="<?= $r['id'] ?>" class="multi-role-primary-radio add-user-primary-radio" id="aur_radio_<?= $r['id'] ?>" <?= $isStaff ? 'checked' : '' ?> onchange="onAddUserPrimaryRadioChange(<?= $r['id'] ?>)">
+                                        <span class="primary-radio-pill" style="font-size: 10px; padding: 3px 8px;"><i class="fa-solid fa-star"></i> Utama</span>
+                                    </label>
+                                </div>
+                            </div>
                         <?php endforeach; ?>
-                        <option value="siswa">Siswa (siswa)</option>
-                    </select>
-                    <small style="color: #64748b; margin-top: 4px; display: block;">
-                        Hak akses menu akan otomatis diselaraskan dengan default template role yang dipilih.
+                    </div>
+                    <small style="color: #64748b; margin-top: 6px; display: block; font-size: 11.5px;">
+                        <i class="fa-solid fa-circle-info" style="color: #3b82f6;"></i> Hak akses menu akan otomatis diselaraskan secara gabungan (<em>additive union</em>) dari seluruh role yang dicentang.
                     </small>
                 </div>
             </div>
@@ -2674,12 +2805,17 @@ input[type="checkbox"].crud-row-all {
 <!-- MODAL: EDIT USER LENGKAP -->
 <!-- ========================================================================= -->
 <div id="modalEditUser" class="custom-modal-overlay">
-    <div class="custom-modal-box" style="max-width: 520px;">
+    <div class="custom-modal-box" style="max-width: 620px;">
         <div class="custom-modal-header">
-            <h3 style="margin: 0; font-size: 18px; color: #0f172a;">
-                <i class="fa-solid fa-user-pen" style="color: var(--primary); margin-right: 8px;"></i>
-                Edit Data Pengguna
-            </h3>
+            <div>
+                <h3 style="margin: 0; font-size: 18px; color: #0f172a;">
+                    <i class="fa-solid fa-user-pen" style="color: var(--primary); margin-right: 8px;"></i>
+                    Edit Data Pengguna & Multi-Role
+                </h3>
+                <div style="font-size: 12px; color: #64748b; margin-top: 4px;">
+                    Kelola profil dan tetapkan satu atau beberapa peran sekaligus untuk pengguna ini.
+                </div>
+            </div>
             <button type="button" class="btn-close-sidebar" style="position: static;" onclick="closeModal('modalEditUser')">
                 <i class="fa-solid fa-xmark"></i>
             </button>
@@ -2689,34 +2825,67 @@ input[type="checkbox"].crud-row-all {
             <input type="hidden" name="action" value="edit_user">
             <input type="hidden" name="user_id" id="editUserId" value="">
             <div class="custom-modal-body">
-                <div class="form-group" style="margin-bottom: 16px;">
+                <div class="form-group" style="margin-bottom: 14px;">
                     <label style="display: block; font-weight: 600; margin-bottom: 6px;">Nama Lengkap *</label>
                     <input type="text" name="name" id="editName" required
                            style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box;">
                 </div>
 
-                <div class="form-group" style="margin-bottom: 16px;">
-                    <label style="display: block; font-weight: 600; margin-bottom: 6px;">Username *</label>
-                    <input type="text" name="username" id="editUsername" required
-                           style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px;">
+                    <div class="form-group">
+                        <label style="display: block; font-weight: 600; margin-bottom: 6px;">Username *</label>
+                        <input type="text" name="username" id="editUsername" required
+                               style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box;">
+                    </div>
+
+                    <div class="form-group">
+                        <label style="display: block; font-weight: 600; margin-bottom: 6px;">Password Baru</label>
+                        <input type="password" name="password" placeholder="Kosongkan jika tidak diganti"
+                               style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box;">
+                    </div>
                 </div>
 
-                <div class="form-group" style="margin-bottom: 16px;">
-                    <label style="display: block; font-weight: 600; margin-bottom: 6px;">Password Baru (Kosongkan jika tidak diganti)</label>
-                    <input type="password" name="password" placeholder="Biarkan kosong jika tidak diubah"
-                           style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box;">
-                </div>
+                <div class="form-group" style="margin-bottom: 14px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <label style="font-weight: 600; margin: 0; color: #1e293b; font-size: 13.5px;">
+                            <i class="fa-solid fa-users-gear" style="color: var(--primary); margin-right: 4px;"></i>
+                            Role Pengguna (Bisa pilih lebih dari satu role) *
+                        </label>
+                        <span style="font-size: 11px; color: #64748b; font-weight: 600;">
+                            <i class="fa-solid fa-star" style="color: #10b981;"></i> Tandai Role Utama
+                        </span>
+                    </div>
 
-                <div class="form-group" style="margin-bottom: 16px;">
-                    <label style="display: block; font-weight: 600; margin-bottom: 6px;">Role *</label>
-                    <select name="role" id="editRole" required style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box;">
+                    <div class="edit-user-roles-container" style="max-height: 210px; overflow-y: auto; border: 1.5px solid #cbd5e1; border-radius: 10px; padding: 8px; background: #f8fafc; display: flex; flex-direction: column; gap: 6px;">
                         <?php foreach ($roles as $r): ?>
-                            <option value="<?= htmlspecialchars($r['role_key']) ?>">
-                                <?= htmlspecialchars($r['role_name']) ?>
-                            </option>
+                            <div class="edit-role-card" id="edit_role_card_<?= $r['id'] ?>" style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; transition: all 0.15s;">
+                                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; margin: 0; flex: 1;">
+                                    <input type="checkbox" name="role_ids[]" value="<?= $r['id'] ?>" class="edit-user-role-chk" id="eur_chk_<?= $r['id'] ?>" onchange="onEditUserRoleChange(<?= $r['id'] ?>)">
+                                    <div>
+                                        <div style="font-weight: 700; font-size: 13px; color: #1e293b;">
+                                            <?= htmlspecialchars($r['role_name']) ?>
+                                            <code style="font-size: 11px; color: #64748b;">(<?= htmlspecialchars($r['role_key']) ?>)</code>
+                                            <?php if ($r['is_system'] == 1): ?>
+                                                <span style="font-size: 9.5px; background: #e2e8f0; color: #475569; padding: 1px 5px; border-radius: 4px; margin-left: 3px;">SISTEM</span>
+                                            <?php endif; ?>
+                                        </div>
+                                        <?php if (!empty($r['description'])): ?>
+                                            <div style="font-size: 11px; color: #64748b;"><?= htmlspecialchars($r['description']) ?></div>
+                                        <?php endif; ?>
+                                    </div>
+                                </label>
+                                <div>
+                                    <label class="primary-radio-label" title="Jadikan role utama pengguna">
+                                        <input type="radio" name="primary_role_id" value="<?= $r['id'] ?>" class="multi-role-primary-radio edit-user-primary-radio" id="eur_radio_<?= $r['id'] ?>" onchange="onEditUserPrimaryRadioChange(<?= $r['id'] ?>)">
+                                        <span class="primary-radio-pill" style="font-size: 10px; padding: 3px 8px;"><i class="fa-solid fa-star"></i> Utama</span>
+                                    </label>
+                                </div>
+                            </div>
                         <?php endforeach; ?>
-                        <option value="siswa">Siswa</option>
-                    </select>
+                    </div>
+                    <small style="color: #64748b; margin-top: 6px; display: block; font-size: 11.5px; line-height: 1.4;">
+                        <i class="fa-solid fa-circle-info" style="color: #3b82f6;"></i> Centang satu atau beberapa peran. Hak akses menu dan wewenang CRUD akan digabung secara otomatis (<em>additive union</em>).
+                    </small>
                 </div>
             </div>
 
@@ -3422,13 +3591,134 @@ function openEditRoleModal(role) {
     openModal('modalEditRole');
 }
 
-// Buka Modal Edit User Lengkap
+// Buka Modal Edit User Lengkap (Multi-Role Aware)
 function openEditUserModal(user) {
     document.getElementById('editUserId').value = user.id;
     document.getElementById('editName').value = user.name;
     document.getElementById('editUsername').value = user.username;
-    document.getElementById('editRole').value = user.role;
+
+    // Reset password input
+    const passInput = document.querySelector('#modalEditUser input[name="password"]');
+    if (passInput) passInput.value = '';
+
+    // Reset all edit checkboxes and radios
+    document.querySelectorAll('.edit-user-role-chk').forEach(c => c.checked = false);
+    document.querySelectorAll('.edit-user-primary-radio').forEach(r => r.checked = false);
+    document.querySelectorAll('.edit-role-card').forEach(card => {
+        card.style.borderColor = '#e2e8f0';
+        card.style.background = '#ffffff';
+    });
+
     openModal('modalEditUser');
+
+    // Fetch existing assigned roles
+    fetch('index.php?action=get_user_roles&user_id=' + user.id)
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'success') {
+                const assigned = data.assigned_role_ids || [];
+                const primaryId = data.primary_role_id || 0;
+
+                assigned.forEach(rid => {
+                    const chk = document.getElementById('eur_chk_' + rid);
+                    if (chk) {
+                        chk.checked = true;
+                        const card = document.getElementById('edit_role_card_' + rid);
+                        if (card) {
+                            card.style.borderColor = 'var(--primary, #4f46e5)';
+                            card.style.background = 'rgba(79, 70, 229, 0.04)';
+                        }
+                    }
+                });
+
+                if (primaryId > 0) {
+                    const rRadio = document.getElementById('eur_radio_' + primaryId);
+                    if (rRadio) rRadio.checked = true;
+                } else if (assigned.length > 0) {
+                    const rRadio = document.getElementById('eur_radio_' + assigned[0]);
+                    if (rRadio) rRadio.checked = true;
+                }
+            }
+        })
+        .catch(err => {
+            console.error('Error fetching user roles:', err);
+        });
+}
+
+function onEditUserRoleChange(roleId) {
+    const chk = document.getElementById('eur_chk_' + roleId);
+    const card = document.getElementById('edit_role_card_' + roleId);
+    const radio = document.getElementById('eur_radio_' + roleId);
+
+    if (chk && chk.checked) {
+        if (card) {
+            card.style.borderColor = 'var(--primary, #4f46e5)';
+            card.style.background = 'rgba(79, 70, 229, 0.04)';
+        }
+        const hasCheckedRadio = Array.from(document.querySelectorAll('.edit-user-primary-radio')).some(r => r.checked);
+        if (!hasCheckedRadio && radio) {
+            radio.checked = true;
+        }
+    } else {
+        if (card) {
+            card.style.borderColor = '#e2e8f0';
+            card.style.background = '#ffffff';
+        }
+        if (radio && radio.checked) {
+            radio.checked = false;
+            const firstActiveChk = document.querySelector('.edit-user-role-chk:checked');
+            if (firstActiveChk) {
+                const otherRadio = document.getElementById('eur_radio_' + firstActiveChk.value);
+                if (otherRadio) otherRadio.checked = true;
+            }
+        }
+    }
+}
+
+function onEditUserPrimaryRadioChange(roleId) {
+    const chk = document.getElementById('eur_chk_' + roleId);
+    if (chk && !chk.checked) {
+        chk.checked = true;
+        onEditUserRoleChange(roleId);
+    }
+}
+
+function onAddUserRoleChange(roleId) {
+    const chk = document.getElementById('aur_chk_' + roleId);
+    const card = document.getElementById('add_role_card_' + roleId);
+    const radio = document.getElementById('aur_radio_' + roleId);
+
+    if (chk && chk.checked) {
+        if (card) {
+            card.style.borderColor = 'var(--primary, #4f46e5)';
+            card.style.background = 'rgba(79, 70, 229, 0.04)';
+        }
+        const hasCheckedRadio = Array.from(document.querySelectorAll('.add-user-primary-radio')).some(r => r.checked);
+        if (!hasCheckedRadio && radio) {
+            radio.checked = true;
+        }
+    } else {
+        if (card) {
+            card.style.borderColor = '#e2e8f0';
+            card.style.background = '#ffffff';
+        }
+        if (radio && radio.checked) {
+            radio.checked = false;
+            const firstActiveChk = document.querySelector('.add-user-role-chk:checked');
+            if (firstActiveChk) {
+                const otherRadio = document.getElementById('aur_radio_' + firstActiveChk.value);
+                if (otherRadio) otherRadio.checked = true;
+            }
+        }
+    }
+}
+
+function onAddUserPrimaryRadioChange(roleId) {
+    const chk = document.getElementById('aur_chk_' + roleId);
+    if (chk && !chk.checked) {
+        chk.checked = true;
+        onAddUserRoleChange(roleId);
+    }
 }
 
 // Otomatis generate slug role
