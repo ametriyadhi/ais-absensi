@@ -981,107 +981,6 @@ require_once __DIR__ . '/../../includes/header.php';
     </div>
 </div>
 
-<script>
-function toggleAddDropdown() {
-    const dd = document.getElementById('dropdownAddSupervisi');
-    dd.style.display = (dd.style.display === 'none' || dd.style.display === '') ? 'block' : 'none';
-}
-
-document.addEventListener('click', function(e) {
-    if (!e.target.closest('#dropdownAddSupervisi') && !e.target.closest('button[onclick="toggleAddDropdown()"]')) {
-        const dd = document.getElementById('dropdownAddSupervisi');
-        if (dd) dd.style.display = 'none';
-    }
-});
-
-function openPrintReportModal(sessionId) {
-    fetch('reports.php?ajax=get_report_detail&session_id=' + sessionId)
-        .then(res => res.json())
-        .then(data => {
-            if (!data.success) {
-                alert(data.message || 'Gagal memuat detail raport.');
-                return;
-            }
-            const s = data.session;
-            document.getElementById('rptTeacherName').innerText = s.teacher_name;
-            document.getElementById('rptObsDate').innerText = s.observation_date;
-            document.getElementById('rptSubjectName').innerText = s.subject_name;
-            document.getElementById('rptClassName').innerText = s.class_name;
-            document.getElementById('rptRoom').innerText = s.room_location || '-';
-            document.getElementById('rptObserverName').innerText = s.observer_name;
-            document.getElementById('rptTypeName').innerText = s.type_name;
-
-            document.getElementById('rptTotalScoreDisplay').innerText = Math.round(s.total_score) + ' / ' + Math.round(s.max_possible_score) + ' (' + parseFloat(s.percentage_score).toFixed(2) + '%)';
-            document.getElementById('rptPredicateDisplay').innerText = s.predicate_name;
-
-            document.getElementById('rptNotesGood').innerText = s.notes_good_practice || 'Tidak ada catatan khusus.';
-            document.getElementById('rptNotesGrowth').innerText = s.notes_growth_plan || 'Pertahankan capaian yang ada.';
-            document.getElementById('rptNotesReflection').innerText = s.notes_teacher_reflection || '-';
-
-            document.getElementById('rptSignTeacher').innerText = s.signed_teacher_name || s.teacher_name;
-            document.getElementById('rptSignObserver').innerText = s.signed_observer_name || s.observer_name;
-            document.getElementById('rptSignPrincipal').innerText = s.signed_principal_name || 'Awang Darmawan, SS';
-
-            // Render Tabel Butir Per Kategori
-            let tableHtml = '<table style="width: 100%; border-collapse: collapse; font-size: 11px;" border="1">';
-            tableHtml += '<tr style="background: #f1f5f9; text-align: center;">';
-            tableHtml += '<th style="padding: 6px; width: 35px;">No</th>';
-            tableHtml += '<th style="padding: 6px; width: 130px;">Aspek / Kode</th>';
-            tableHtml += '<th style="padding: 6px;">Indikator Penilaian Pembelajaran</th>';
-            tableHtml += '<th style="padding: 6px; width: 65px;">Skor (1-4)</th>';
-            tableHtml += '</tr>';
-
-            let globalNo = 1;
-            data.categories.forEach(cat => {
-                tableHtml += `<tr style="background: #e2e8f0; font-weight: bold;">
-                    <td colspan="3" style="padding: 6px 8px;">${cat.category_name}</td>
-                    <td style="padding: 6px; text-align: center;">${Math.round(cat.subtotal_score)} / ${Math.round(cat.subtotal_max)}</td>
-                </tr>`;
-
-                cat.items.forEach(it => {
-                    tableHtml += `<tr>
-                        <td style="padding: 4px 6px; text-align: center;">${globalNo++}</td>
-                        <td style="padding: 4px 6px;"><strong>${it.aspek_label || it.code || '-'}</strong></td>
-                        <td style="padding: 4px 6px;">${it.indicator_text}</td>
-                        <td style="padding: 4px 6px; text-align: center; font-weight: bold;">${Math.round(it.score)}</td>
-                    </tr>`;
-                });
-            });
-
-            tableHtml += '</table>';
-            document.getElementById('rptTableContainer').innerHTML = tableHtml;
-
-            document.getElementById('modalPrintReport').style.display = 'flex';
-        })
-        .catch(err => {
-            alert('Terjadi kesalahan saat memuat dokumen.');
-        });
-}
-
-function printReportDocument() {
-    const printContents = document.getElementById('printableReportArea').innerHTML;
-    const printWindow = window.open('', '_blank', 'width=900,height=700');
-    printWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Raport Supervisi - SMP An Nahl Islamic School</title>
-            <style>
-                @page { size: A4 portrait; margin: 15mm; }
-                body { font-family: 'Times New Roman', Times, serif; color: #000; margin: 0; padding: 0; }
-                table { border-collapse: collapse; width: 100%; }
-                th, td { border: 1px solid #000; padding: 5px; }
-            </style>
-        </head>
-        <body onload="window.print(); window.close();">
-            ${printContents}
-        </body>
-        </html>
-    `);
-    printWindow.document.close();
-}
-
-
 <!-- ========================================================================= -->
 <!-- MODAL: LEMBAR RANGKUMAN AKUMULASI SUPERVISI GABUNGAN (A4 PRINT PREVIEW) -->
 <!-- ========================================================================= -->
@@ -1268,6 +1167,105 @@ function printReportDocument() {
     </div>
 </div>
 
+<script>
+function toggleAddDropdown() {
+    const dd = document.getElementById('dropdownAddSupervisi');
+    dd.style.display = (dd.style.display === 'none' || dd.style.display === '') ? 'block' : 'none';
+}
+
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('#dropdownAddSupervisi') && !e.target.closest('button[onclick="toggleAddDropdown()"]')) {
+        const dd = document.getElementById('dropdownAddSupervisi');
+        if (dd) dd.style.display = 'none';
+    }
+});
+
+function openPrintReportModal(sessionId) {
+    fetch('reports.php?ajax=get_report_detail&session_id=' + sessionId)
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) {
+                alert(data.message || 'Gagal memuat detail raport.');
+                return;
+            }
+            const s = data.session;
+            document.getElementById('rptTeacherName').innerText = s.teacher_name;
+            document.getElementById('rptObsDate').innerText = s.observation_date;
+            document.getElementById('rptSubjectName').innerText = s.subject_name;
+            document.getElementById('rptClassName').innerText = s.class_name;
+            document.getElementById('rptRoom').innerText = s.room_location || '-';
+            document.getElementById('rptObserverName').innerText = s.observer_name;
+            document.getElementById('rptTypeName').innerText = s.type_name;
+
+            document.getElementById('rptTotalScoreDisplay').innerText = Math.round(s.total_score) + ' / ' + Math.round(s.max_possible_score) + ' (' + parseFloat(s.percentage_score).toFixed(2) + '%)';
+            document.getElementById('rptPredicateDisplay').innerText = s.predicate_name;
+
+            document.getElementById('rptNotesGood').innerText = s.notes_good_practice || 'Tidak ada catatan khusus.';
+            document.getElementById('rptNotesGrowth').innerText = s.notes_growth_plan || 'Pertahankan capaian yang ada.';
+            document.getElementById('rptNotesReflection').innerText = s.notes_teacher_reflection || '-';
+
+            document.getElementById('rptSignTeacher').innerText = s.signed_teacher_name || s.teacher_name;
+            document.getElementById('rptSignObserver').innerText = s.signed_observer_name || s.observer_name;
+            document.getElementById('rptSignPrincipal').innerText = s.signed_principal_name || 'Awang Darmawan, SS';
+
+            // Render Tabel Butir Per Kategori
+            let tableHtml = '<table style="width: 100%; border-collapse: collapse; font-size: 11px;" border="1">';
+            tableHtml += '<tr style="background: #f1f5f9; text-align: center;">';
+            tableHtml += '<th style="padding: 6px; width: 35px;">No</th>';
+            tableHtml += '<th style="padding: 6px; width: 130px;">Aspek / Kode</th>';
+            tableHtml += '<th style="padding: 6px;">Indikator Penilaian Pembelajaran</th>';
+            tableHtml += '<th style="padding: 6px; width: 65px;">Skor (1-4)</th>';
+            tableHtml += '</tr>';
+
+            let globalNo = 1;
+            data.categories.forEach(cat => {
+                tableHtml += `<tr style="background: #e2e8f0; font-weight: bold;">
+                    <td colspan="3" style="padding: 6px 8px;">${cat.category_name}</td>
+                    <td style="padding: 6px; text-align: center;">${Math.round(cat.subtotal_score)} / ${Math.round(cat.subtotal_max)}</td>
+                </tr>`;
+
+                cat.items.forEach(it => {
+                    tableHtml += `<tr>
+                        <td style="padding: 4px 6px; text-align: center;">${globalNo++}</td>
+                        <td style="padding: 4px 6px;"><strong>${it.aspek_label || it.code || '-'}</strong></td>
+                        <td style="padding: 4px 6px;">${it.indicator_text}</td>
+                        <td style="padding: 4px 6px; text-align: center; font-weight: bold;">${Math.round(it.score)}</td>
+                    </tr>`;
+                });
+            });
+
+            tableHtml += '</table>';
+            document.getElementById('rptTableContainer').innerHTML = tableHtml;
+
+            document.getElementById('modalPrintReport').style.display = 'flex';
+        })
+        .catch(err => {
+            alert('Terjadi kesalahan saat memuat dokumen.');
+        });
+}
+
+function printReportDocument() {
+    const printContents = document.getElementById('printableReportArea').innerHTML;
+    const printWindow = window.open('', '_blank', 'width=900,height=700');
+    printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Raport Supervisi - SMP An Nahl Islamic School</title>
+            <style>
+                @page { size: A4 portrait; margin: 15mm; }
+                body { font-family: 'Times New Roman', Times, serif; color: #000; margin: 0; padding: 0; }
+                table { border-collapse: collapse; width: 100%; }
+                th, td { border: 1px solid #000; padding: 5px; }
+            </style>
+        </head>
+        <body onload="window.print(); window.close();">
+            ${printContents}
+        </body>
+        </html>
+    `);
+    printWindow.document.close();
+}
 
 
 let currentCumulativeTeacherId = 92;
@@ -1275,6 +1273,8 @@ let currentCumulativeTeacherId = 92;
 function openCumulativeReportModal(teacherId) {
     if (!teacherId) teacherId = 92;
     currentCumulativeTeacherId = teacherId;
+    const modal = document.getElementById('modalPrintCumulativeReport');
+    if (modal) modal.style.display = 'flex';
     loadCumulativeReport(teacherId);
 }
 
@@ -1389,6 +1389,17 @@ function closeModal(id) {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
 }
+
+window.addEventListener('click', function(e) {
+    const modal1 = document.getElementById('modalPrintCumulativeReport');
+    if (modal1 && e.target === modal1) {
+        modal1.style.display = 'none';
+    }
+    const modal2 = document.getElementById('modalPrintReport');
+    if (modal2 && e.target === modal2) {
+        modal2.style.display = 'none';
+    }
+});
 </script>
 
 <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
