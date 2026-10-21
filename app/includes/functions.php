@@ -452,6 +452,181 @@ if (!function_exists('getSupervisionObservers')) {
     }
 }
 
+if (!function_exists('getSupervisionCumulativeData')) {
+    function getSupervisionCumulativeData(PDO $pdo, int $teacherId): ?array {
+        // 1. Teacher Info
+        $stmtT = $pdo->prepare("
+            SELECT s.id, s.name, s.nik, s.unit_id, u.unit as unit_name
+            FROM staff s
+            LEFT JOIN units u ON u.id = s.unit_id
+            WHERE s.id = ?
+        ");
+        $stmtT->execute([$teacherId]);
+        $teacher = $stmtT->fetch(PDO::FETCH_ASSOC);
+        if (!$teacher) return null;
+
+        // 2. Latest Peer Supervision (type_id = 1)
+        $stmtPeer = $pdo->prepare("
+            SELECT ss.*, u.name as observer_name
+            FROM supervision_sessions ss
+            JOIN users u ON u.id = ss.observer_id
+            WHERE ss.teacher_id = ? AND ss.type_id = 1
+            ORDER BY ss.observation_date DESC, ss.id DESC LIMIT 1
+        ");
+        $stmtPeer->execute([$teacherId]);
+        $peer = $stmtPeer->fetch(PDO::FETCH_ASSOC);
+
+        // 3. Latest Principal Supervision (type_id = 2)
+        $stmtKepsek = $pdo->prepare("
+            SELECT ss.*, u.name as observer_name
+            FROM supervision_sessions ss
+            JOIN users u ON u.id = ss.observer_id
+            WHERE ss.teacher_id = ? AND ss.type_id = 2
+            ORDER BY ss.observation_date DESC, ss.id DESC LIMIT 1
+        ");
+        $stmtKepsek->execute([$teacherId]);
+        $kepsek = $stmtKepsek->fetch(PDO::FETCH_ASSOC);
+
+        // 4. Calculate 7 Components
+        $categories = $pdo->query("SELECT * FROM supervision_categories ORDER BY type_id ASC, sort_order ASC")->fetchAll(PDO::FETCH_ASSOC);
+        $components = [];
+        foreach ($categories as $cat) {
+            $cId = (int)$cat['id'];
+            $tId = (int)$cat['type_id'];
+            $sessId = ($tId === 1) ? ($peer['id'] ?? 0) : ($kepsek['id'] ?? 0);
+            
+            $userScore = 0.0;
+            $maxScore = ($tId === 1) ? ($cId == 1 ? 40.0 : ($cId == 2 ? 32.0 : 16.0)) : ($cId == 4 ? 20.0 : ($cId == 5 ? 40.0 : ($cId == 6 ? 20.0 : 16.0)));
+            
+            if ($sessId > 0) {
+                $stmt = $pdo->prepare("
+                    SELECT SUM(ssc.score * sri.weight) as u_score,
+                           SUM(sri.max_score * sri.weight) as m_score
+                    FROM supervision_scores ssc
+                    JOIN supervision_rubric_items sri ON sri.id = ssc.item_id
+                    WHERE ssc.session_id = ? AND sri.category_id = ?
+                ");
+                $stmt->execute([$sessId, $cId]);
+                $row = $stmt->fetch(PDO::FETCH_ASSOC);
+                if ($row && $row['u_score'] !== null) {
+                    $userScore = (float)$row['u_score'];
+                    $maxScore = (float)$row['m_score'];
+                }
+            }
+            
+            $pct = ($maxScore > 0) ? round(($userScore / $maxScore) * 100, 1) : 0.0;
+            
+            $cleanName = preg_replace('/^[0-9]+\.\s*/', '', $cat['category_name']);
+            if ($tId == 2 && strpos($cleanName, 'Perencanaan') !== false) $cleanName = 'Perencanaan Ajar (Kepsek)';
+            if ($tId == 2 && strpos($cleanName, 'Pelaksanaan') !== false) $cleanName = 'Pelaksanaan Kelas (Kepsek)';
+            if ($tId == 2 && strpos($cleanName, 'Asesmen') !== false) $cleanName = 'Asesmen Hasil Belajar';
+            if ($tId == 2 && strpos($cleanName, 'Komitmen') !== false) $cleanName = 'Pengembangan Diri Guru';
+            if ($tId == 1 && strpos($cleanName, 'Keterlibatan') !== false) $cleanName = 'Keterlibatan Siswa';
+            
+            $color = '#2563EB';
+            if ($cleanName === 'Keterlibatan Siswa') $color = '#4F46E5';
+            if ($cleanName === 'Perencanaan Ajar (Kepsek)') $color = '#9333EA';
+            if ($cleanName === 'Pelaksanaan Kelas (Kepsek)') $color = '#0D9488';
+            if ($cleanName === 'Asesmen Hasil Belajar') $color = '#EA580C';
+            if ($cleanName === 'Pengembangan Diri Guru') $color = '#E11D48';
+
+            $components[] = [
+                'id' => $cId,
+                'type_id' => $tId,
+                'name' => $cleanName,
+                'score' => $userScore,
+                'max_score' => $maxScore,
+                'percentage' => $pct,
+                'color' => $color
+            ];
+        }
+
+        $peerScore = $peer ? (float)$peer['total_score'] : null;
+        $peerMax = $peer ? (float)$peer['max_possible_score'] : 88.0;
+        $peerPct = $peer ? (float)$peer['percentage_score'] : null;
+        $peerPred = $peer ? $peer['predicate_name'] : 'Belum Ada';
+
+        $kepsekScore = $kepsek ? (float)$kepsek['total_score'] : null;
+        $kepsekMax = $kepsek ? (float)$kepsek['max_possible_score'] : 96.0;
+        $kepsekPct = $kepsek ? (float)$kepsek['percentage_score'] : null;
+        $kepsekPred = $kepsek ? $kepsek['predicate_name'] : 'Belum Ada';
+
+        $totalScore = ($peerScore ?? 0.0) + ($kepsekScore ?? 0.0);
+        $totalMax = ($peer ? $peerMax : 88.0) + ($kepsek ? $kepsekMax : 96.0);
+        
+        if ($peer && $kepsek) {
+            $avgPct = round(($peerPct + $kepsekPct) / 2, 1);
+        } elseif ($peer) {
+            $avgPct = round($peerPct, 1);
+        } elseif ($kepsek) {
+            $avgPct = round($kepsekPct, 1);
+        } else {
+            $avgPct = 0.0;
+        }
+
+        $stmtP = $pdo->prepare('SELECT predicate_name FROM supervision_predicates WHERE min_percentage <= ? ORDER BY min_percentage DESC LIMIT 1');
+        $stmtP->execute([$avgPct]);
+        $avgPred = $stmtP->fetchColumn() ?: 'Need Improvement';
+
+        $subjectName = $peer['subject_name'] ?? ($kepsek['subject_name'] ?? '-');
+        $className = $peer['class_name'] ?? ($kepsek['class_name'] ?? '-');
+        $obsDate = $peer['observation_date'] ?? ($kepsek['observation_date'] ?? date('Y-m-d'));
+
+        $notesGood = [];
+        if (!empty($peer['notes_good_practice'])) $notesGood[] = '[Sejawat] ' . trim($peer['notes_good_practice']);
+        if (!empty($kepsek['notes_good_practice'])) $notesGood[] = '[Kepsek] ' . trim($kepsek['notes_good_practice']);
+
+        $notesGrowth = [];
+        if (!empty($peer['notes_growth_plan'])) $notesGrowth[] = '[Sejawat] ' . trim($peer['notes_growth_plan']);
+        if (!empty($kepsek['notes_growth_plan'])) $notesGrowth[] = '[Kepsek] ' . trim($kepsek['notes_growth_plan']);
+
+        $notesRecom = [];
+        if (!empty($peer['notes_teacher_reflection'])) $notesRecom[] = '[Rekomendasi Sejawat] ' . trim($peer['notes_teacher_reflection']);
+        if (!empty($kepsek['notes_teacher_reflection'])) $notesRecom[] = '[Rekomendasi Kepsek] ' . trim($kepsek['notes_teacher_reflection']);
+
+        return [
+            'teacher' => $teacher,
+            'peer' => $peer ? [
+                'id' => $peer['id'],
+                'score' => $peerScore,
+                'max_score' => $peerMax,
+                'percentage' => $peerPct,
+                'predicate' => $peerPred,
+                'observer_name' => $peer['observer_name'] ?? '-',
+                'date' => $peer['observation_date']
+            ] : null,
+            'kepsek' => $kepsek ? [
+                'id' => $kepsek['id'],
+                'score' => $kepsekScore,
+                'max_score' => $kepsekMax,
+                'percentage' => $kepsekPct,
+                'predicate' => $kepsekPred,
+                'observer_name' => $kepsek['observer_name'] ?? 'Awang Darmawan, SS',
+                'date' => $kepsek['observation_date']
+            ] : null,
+            'cumulative' => [
+                'total_score' => $totalScore,
+                'max_score' => $totalMax,
+                'avg_percentage' => $avgPct,
+                'predicate' => $avgPred,
+                'subject_name' => $subjectName,
+                'class_name' => $className,
+                'observation_date' => $obsDate,
+                'academic_year' => '2026/2027 • Semester Ganjil',
+                'principal_name' => $kepsek['signed_principal_name'] ?? ($kepsek['observer_name'] ?? 'Awang Darmawan, SS'),
+                'peer_observer_name' => $peer['signed_observer_name'] ?? ($peer['observer_name'] ?? '-'),
+                'teacher_name' => $teacher['name']
+            ],
+            'components' => $components,
+            'notes' => [
+                'good' => $notesGood,
+                'growth' => $notesGrowth,
+                'recommendations' => $notesRecom
+            ]
+        ];
+    }
+}
+
 // =========================================================================
 // UPLOAD FOTO
 // =========================================================================
