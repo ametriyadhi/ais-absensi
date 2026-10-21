@@ -448,7 +448,21 @@ if (isset($_GET['print_cumulative'])) {
         </style>
     </head>
     <body <?= isset($_GET['autoprint']) ? 'onload="window.print()"' : '' ?>>
-    <div class="page-container">
+    <!-- TOP TOOLBAR FOR SCREEN ONLY -->
+    <div style="position: sticky; top: 0; background: #1e293b; color: #ffffff; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; z-index: 1000; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);" class="no-print-toolbar">
+        <div style="font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+            <span>Lembar Rangkuman Akumulasi Supervisi Akademik Gabungan &bull; SMP An Nahl</span>
+        </div>
+        <div style="display: flex; gap: 10px;">
+            <button onclick="window.print()" style="background: #4338ca; color: #ffffff; padding: 7px 16px; font-size: 12.5px; font-weight: 700; border-radius: 8px; cursor: pointer; border: none; display: inline-flex; align-items: center; gap: 6px;">
+                <span>🖨️ Cetak / Simpan PDF</span>
+            </button>
+            <button onclick="window.close()" style="background: #475569; color: #ffffff; padding: 7px 16px; font-size: 12.5px; font-weight: 700; border-radius: 8px; cursor: pointer; border: none; display: inline-flex; align-items: center; gap: 6px;">
+                <span>✕ Tutup Halaman</span>
+            </button>
+        </div>
+    </div>
+    <div class="page-container" style="margin-top: 20px;">
         <!-- KOP SURAT -->
         <div class="header-box">
             <img class="logo-img" src="<?= $logoDataUri ?>" alt="Logo">
@@ -478,7 +492,7 @@ if (isset($_GET['print_cumulative'])) {
             </tr>
             <tr>
                 <td style="font-weight: bold;">Tanggal Pelaksanaan:</td>
-                <td><?= htmlspecialchars($cum['observation_date']) ?></td>
+                <td><?= htmlspecialchars(formatIndoDate($cum['observation_date'])) ?></td>
                 <td style="font-weight: bold;">Tahun Pelajaran:</td>
                 <td><?= htmlspecialchars($cum['academic_year']) ?></td>
             </tr>
@@ -600,6 +614,556 @@ if (isset($_GET['print_cumulative'])) {
     <?php
     exit;
 }
+
+
+// =========================================================================
+// STANDALONE VIEW: CETAK / LIHAT LEMBAR HASIL EVALUASI SUPERVISI (HALAMAN BARU)
+// =========================================================================
+if (isset($_GET['print_session'])) {
+    $sessId = (int)($_GET['session_id'] ?? 0);
+    $stmtS = $pdo->prepare("
+        SELECT ss.*, st.name as type_name, st.type_key,
+               s.name as teacher_name, s.nik as teacher_nik,
+               u.name as observer_name
+        FROM supervision_sessions ss
+        JOIN supervision_types st ON st.id = ss.type_id
+        JOIN staff s ON s.id = ss.teacher_id
+        JOIN users u ON u.id = ss.observer_id
+        WHERE ss.id = ? LIMIT 1
+    ");
+    $stmtS->execute([$sessId]);
+    $session = $stmtS->fetch(PDO::FETCH_ASSOC);
+
+    if (!$session) {
+        die('Dokumen evaluasi supervisi tidak ditemukan.');
+    }
+
+    // Ambil rincian kategori dan skor butir
+    $stmtScores = $pdo->prepare("
+        SELECT sc.score, sri.id as item_id, sri.code, sri.aspek_label, sri.indicator_text,
+               sri.min_score, sri.max_score, sri.weight,
+               cat.id as category_id, cat.category_name
+        FROM supervision_scores sc
+        JOIN supervision_rubric_items sri ON sri.id = sc.item_id
+        JOIN supervision_categories cat ON cat.id = sri.category_id
+        WHERE sc.session_id = ?
+        ORDER BY cat.sort_order ASC, sri.sort_order ASC, sri.id ASC
+    ");
+    $stmtScores->execute([$sessId]);
+    $scoreRows = $stmtScores->fetchAll(PDO::FETCH_ASSOC);
+
+    $categoriesDetail = [];
+    foreach ($scoreRows as $sr) {
+        $cId = $sr['category_id'];
+        if (!isset($categoriesDetail[$cId])) {
+            $categoriesDetail[$cId] = [
+                'category_name' => $sr['category_name'],
+                'subtotal_score' => 0,
+                'subtotal_max' => 0,
+                'items' => []
+            ];
+        }
+        $categoriesDetail[$cId]['items'][] = $sr;
+        $categoriesDetail[$cId]['subtotal_score'] += ($sr['score'] * $sr['weight']);
+        $categoriesDetail[$cId]['subtotal_max'] += ($sr['max_score'] * $sr['weight']);
+    }
+
+    $logoDataUri = 'logo_sm.png';
+    if (file_exists(__DIR__ . '/../logo_sm.png')) {
+        $logoDataUri = 'data:image/png;base64,' . base64_encode(file_get_contents(__DIR__ . '/../logo_sm.png'));
+    }
+
+    $badgeColor = '#2563eb';
+    if ($session['predicate_name'] === 'Outstanding') $badgeColor = '#1d4ed8';
+    elseif ($session['predicate_name'] === 'Very Good' || $session['predicate_name'] === 'Excellent') $badgeColor = '#059669';
+    elseif ($session['predicate_name'] === 'Good') $badgeColor = '#0d9488';
+    elseif ($session['predicate_name'] === 'Fair') $badgeColor = '#d97706';
+    elseif ($session['predicate_name'] === 'Need Improvement') $badgeColor = '#dc2626';
+    ?>
+    <!DOCTYPE html>
+    <html lang="id">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Lembar Hasil Evaluasi & Supervisi Pembelajaran - <?= htmlspecialchars($session['teacher_name']) ?></title>
+        <style>
+            @page {
+                size: A4 portrait;
+                margin: 12mm 14mm;
+            }
+            * {
+                box-sizing: border-box;
+            }
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                color: #0f172a;
+                margin: 0;
+                padding: 0;
+                background: #f1f5f9;
+                line-height: 1.4;
+                font-size: 11px;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            @media screen {
+                .top-toolbar {
+                    position: sticky;
+                    top: 0;
+                    background: #1e293b;
+                    color: #ffffff;
+                    padding: 10px 20px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    z-index: 1000;
+                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                }
+                .toolbar-title {
+                    font-weight: 700;
+                    font-size: 14px;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+                .toolbar-actions {
+                    display: flex;
+                    gap: 10px;
+                }
+                .btn-action {
+                    padding: 7px 16px;
+                    font-size: 12.5px;
+                    font-weight: 700;
+                    border-radius: 8px;
+                    cursor: pointer;
+                    border: none;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    text-decoration: none;
+                }
+                .btn-primary {
+                    background: #4f46e5;
+                    color: #ffffff;
+                }
+                .btn-primary:hover {
+                    background: #4338ca;
+                }
+                .btn-secondary {
+                    background: #475569;
+                    color: #ffffff;
+                }
+                .btn-secondary:hover {
+                    background: #334155;
+                }
+                .doc-wrapper {
+                    max-width: 800px;
+                    margin: 24px auto 40px auto;
+                    background: #ffffff;
+                    padding: 24px 28px;
+                    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+                    border-radius: 8px;
+                }
+            }
+            @media print {
+            .no-print-toolbar { display: none !important; }
+
+                .top-toolbar {
+                    display: none !important;
+                }
+                body {
+                    background: #ffffff;
+                }
+                .doc-wrapper {
+                    max-width: 100%;
+                    margin: 0;
+                    padding: 0;
+                    box-shadow: none;
+                    border-radius: 0;
+                }
+                tr {
+                    page-break-inside: avoid;
+                }
+                .signature-block {
+                    page-break-inside: avoid;
+                }
+                .notes-block {
+                    page-break-inside: avoid;
+                }
+            }
+
+            /* KOP SURAT */
+            .header-box {
+                display: flex;
+                align-items: center;
+                margin-bottom: 4px;
+            }
+            .logo-img {
+                width: 66px;
+                height: 66px;
+                object-fit: contain;
+                margin-right: 14px;
+            }
+            .header-center {
+                flex: 1;
+                text-align: center;
+            }
+            .school-name {
+                margin: 0;
+                font-size: 16px;
+                font-weight: 800;
+                color: #1D4ED8;
+                letter-spacing: 0.5px;
+                text-transform: uppercase;
+            }
+            .school-address {
+                margin: 2px 0;
+                font-size: 9.5px;
+                color: #4B5563;
+            }
+            .header-divider-thin {
+                border-bottom: 1px solid #E5E7EB;
+                margin: 4px 0;
+            }
+            .doc-title {
+                margin: 0;
+                font-size: 13.5px;
+                font-weight: 800;
+                color: #000000;
+                text-transform: uppercase;
+                letter-spacing: 0.2px;
+            }
+            .doc-subtitle {
+                margin: 2px 0 0 0;
+                font-size: 10.5px;
+                font-weight: 600;
+                color: #1E40AF;
+            }
+            .header-accent-bar {
+                height: 3px;
+                background: #1E3A8A;
+                margin: 6px 0 12px 0;
+            }
+
+            /* METADATA GRID */
+            .meta-card {
+                background: #F8FAFC;
+                border: 1px solid #E2E8F0;
+                border-radius: 8px;
+                padding: 10px 14px;
+                margin-bottom: 14px;
+            }
+            .meta-table {
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 11px;
+            }
+            .meta-table td {
+                padding: 3px 0;
+                vertical-align: top;
+            }
+
+            /* KPI SUMMARY CARDS */
+            .kpi-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr 1fr;
+                gap: 10px;
+                margin-bottom: 14px;
+            }
+            .kpi-card {
+                background: #FFFFFF;
+                border: 1px solid #E2E8F0;
+                border-radius: 8px;
+                padding: 10px 14px;
+                text-align: center;
+            }
+            .kpi-label {
+                font-size: 10px;
+                font-weight: 700;
+                color: #64748B;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-bottom: 2px;
+            }
+            .kpi-value {
+                font-size: 18px;
+                font-weight: 800;
+                color: #0F172A;
+            }
+            .kpi-badge {
+                display: inline-block;
+                padding: 3px 12px;
+                border-radius: 20px;
+                font-weight: 800;
+                font-size: 12px;
+                background: <?= $badgeColor ?>15;
+                color: <?= $badgeColor ?>;
+                border: 1px solid <?= $badgeColor ?>40;
+            }
+
+            /* SECTION HEADER */
+            .section-header {
+                background: #E2E8F0;
+                border-left: 4px solid #1E3A8A;
+                padding: 5px 10px;
+                font-size: 11px;
+                font-weight: 800;
+                color: #000000;
+                text-transform: uppercase;
+                margin: 14px 0 6px 0;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+
+            /* TABLE */
+            .rubric-table {
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 10.5px;
+                margin-bottom: 8px;
+            }
+            .rubric-table th {
+                background: #F1F5F9;
+                border: 1px solid #CBD5E1;
+                padding: 6px 8px;
+                font-weight: 700;
+                color: #334155;
+                text-transform: uppercase;
+                font-size: 10px;
+            }
+            .rubric-table td {
+                border: 1px solid #E2E8F0;
+                padding: 6px 8px;
+                vertical-align: top;
+            }
+            .rubric-table tr:nth-child(even) {
+                background: #F8FAFC;
+            }
+            .category-row td {
+                background: #F1F5F9 !important;
+                font-weight: 800;
+                color: #1E3A8A;
+                border-top: 1.5px solid #CBD5E1;
+                border-bottom: 1.5px solid #CBD5E1;
+                padding: 6px 8px;
+            }
+            .score-pill {
+                display: inline-block;
+                width: 24px;
+                height: 24px;
+                line-height: 24px;
+                text-align: center;
+                border-radius: 50%;
+                background: #4F46E5;
+                color: #FFFFFF;
+                font-weight: 800;
+                font-size: 11px;
+            }
+
+            /* NOTES CONTAINER */
+            .notes-card {
+                border: 1px solid #E2E8F0;
+                border-radius: 8px;
+                padding: 10px 14px;
+                font-size: 10.5px;
+                line-height: 1.4;
+                background: #FFFFFF;
+                margin-bottom: 16px;
+            }
+            .note-group {
+                margin-bottom: 8px;
+            }
+            .note-group:last-child {
+                margin-bottom: 0;
+            }
+            .note-title {
+                font-weight: 800;
+                margin-bottom: 2px;
+                font-size: 11px;
+            }
+            .note-content {
+                margin: 2px 0 0 14px;
+                color: #1E293B;
+            }
+
+            /* SIGNATURES */
+            .signatures-table {
+                width: 100%;
+                margin-top: 18px;
+                border-collapse: collapse;
+                font-size: 11px;
+                text-align: center;
+            }
+            .signatures-table td {
+                width: 33.33%;
+                vertical-align: top;
+                padding: 4px 8px;
+            }
+            .sign-space {
+                height: 50px;
+            }
+            .sign-name {
+                font-weight: 800;
+                text-decoration: underline;
+            }
+        </style>
+    </head>
+    <body <?= isset($_GET['autoprint']) ? 'onload="window.print()"' : '' ?>>
+        <!-- TOP TOOLBAR FOR SCREEN ONLY -->
+        <div class="top-toolbar">
+            <div class="toolbar-title">
+                <span>Raport Hasil Supervisi Pembelajaran Guru &bull; SMP An Nahl Islamic School</span>
+            </div>
+            <div class="toolbar-actions">
+                <button class="btn-action btn-primary" onclick="window.print()">
+                    <span>🖨️ Cetak / Simpan PDF</span>
+                </button>
+                <button class="btn-action btn-secondary" onclick="window.close()">
+                    <span>✕ Tutup Halaman</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="doc-wrapper">
+            <!-- KOP SURAT RESMI -->
+            <div class="header-box">
+                <img class="logo-img" src="<?= $logoDataUri ?>" alt="Logo AIS">
+                <div class="header-center">
+                    <h1 class="school-name">SMP AN NAHL ISLAMIC SCHOOL</h1>
+                    <p class="school-address">Jl. Raya Ciangsana No. 88, Gunung Putri, Kab. Bogor • Telp. (021) 8493-2288 • NPSN: 69978900</p>
+                    <div class="header-divider-thin"></div>
+                    <h2 class="doc-title">LEMBAR HASIL EVALUASI & SUPERVISI PEMBELAJARAN</h2>
+                    <p class="doc-subtitle">Instrumen Penilaian Berbasis Pembelajaran Mendalam & Integrasi KURMAA</p>
+                </div>
+            </div>
+            <div class="header-accent-bar"></div>
+
+            <!-- METADATA GRID -->
+            <div class="meta-card">
+                <table class="meta-table">
+                    <tr>
+                        <td style="width: 18%; font-weight: 700; color: #475569;">Nama Guru:</td>
+                        <td style="width: 34%; font-weight: 800; color: #0F172A;"><?= htmlspecialchars($session['teacher_name']) ?></td>
+                        <td style="width: 20%; font-weight: 700; color: #475569;">Jenis Supervisi:</td>
+                        <td style="width: 28%; font-weight: 800; color: #4338CA;"><?= htmlspecialchars($session['type_name']) ?></td>
+                    </tr>
+                    <tr>
+                        <td style="font-weight: 700; color: #475569;">Mata Pelajaran:</td>
+                        <td><?= htmlspecialchars($session['subject_name']) ?> (<?= htmlspecialchars($session['class_name']) ?>)</td>
+                        <td style="font-weight: 700; color: #475569;">Guru Observer:</td>
+                        <td style="font-weight: 700;"><?= htmlspecialchars($session['observer_name']) ?></td>
+                    </tr>
+                    <tr>
+                        <td style="font-weight: 700; color: #475569;">Ruang / Lokasi:</td>
+                        <td><?= htmlspecialchars($session['room_location'] ?: 'Ruang Kelas ' . $session['class_name']) ?></td>
+                        <td style="font-weight: 700; color: #475569;">Tanggal Pelaksanaan:</td>
+                        <td><?= htmlspecialchars(formatIndoDate($session['observation_date'])) ?></td>
+                    </tr>
+                </table>
+            </div>
+
+            <!-- KPI SUMMARY CARDS -->
+            <div class="kpi-grid">
+                <div class="kpi-card">
+                    <div class="kpi-label">Total Capaian Skor</div>
+                    <div class="kpi-value"><?= number_format($session['total_score'], 0) ?> <span style="font-size: 12px; color: #64748B; font-weight: 600;">/ <?= number_format($session['max_possible_score'], 0) ?></span></div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Persentase Mutu</div>
+                    <div class="kpi-value" style="color: #2563EB;"><?= number_format($session['percentage_score'], 2) ?>%</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Predikat Evaluasi</div>
+                    <div style="margin-top: 4px;"><span class="kpi-badge"><?= htmlspecialchars($session['predicate_name']) ?></span></div>
+                </div>
+            </div>
+
+            <!-- TABEL RUBRIK EVALUASI -->
+            <div class="section-header">
+                <span>I. MATRIKS PENILAIAN INDIKATOR PEMBELAJARAN</span>
+            </div>
+            <table class="rubric-table">
+                <thead>
+                    <tr>
+                        <th style="width: 5%; text-align: center;">No</th>
+                        <th style="width: 24%; text-align: left;">Aspek / Kode</th>
+                        <th style="width: 58%; text-align: left;">Indikator Penilaian Pembelajaran</th>
+                        <th style="width: 13%; text-align: center;">Skor</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php 
+                    $globalNo = 1;
+                    foreach ($categoriesDetail as $cat): 
+                    ?>
+                        <tr class="category-row">
+                            <td colspan="3"><?= htmlspecialchars($cat['category_name']) ?></td>
+                            <td style="text-align: center;"><?= number_format($cat['subtotal_score'], 0) ?> / <?= number_format($cat['subtotal_max'], 0) ?></td>
+                        </tr>
+                        <?php foreach ($cat['items'] as $it): ?>
+                            <tr>
+                                <td style="text-align: center;"><?= $globalNo++ ?></td>
+                                <td><strong><?= htmlspecialchars($it['aspek_label'] ?: $it['code'] ?: '-') ?></strong></td>
+                                <td><?= htmlspecialchars($it['indicator_text']) ?></td>
+                                <td style="text-align: center;"><span class="score-pill"><?= round($it['score']) ?></span></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+
+            <!-- CATATAN KUALITATIF -->
+            <div class="section-header">
+                <span>II. CATATAN KUALITATIF & REKOMENDASI TINDAK LANJUT</span>
+            </div>
+            <div class="notes-card">
+                <div class="note-group">
+                    <div class="note-title" style="color: #047857;">🌟 A. Apresiasi & Praktik Baik yang Ditemukan:</div>
+                    <div class="note-content">
+                        <?= !empty($session['notes_good_practice']) ? '&bull; ' . nl2br(htmlspecialchars($session['notes_good_practice'])) : '<span style="font-style: italic; color: #64748b;">- Tidak ada catatan khusus.</span>' ?>
+                    </div>
+                </div>
+                <div class="note-group" style="margin-top: 8px;">
+                    <div class="note-title" style="color: #C2410C;">📈 B. Teacher Growth Plan & Area Peningkatan:</div>
+                    <div class="note-content">
+                        <?= !empty($session['notes_growth_plan']) ? '&bull; ' . nl2br(htmlspecialchars($session['notes_growth_plan'])) : '<span style="font-style: italic; color: #64748b;">- Pertahankan capaian dan konsistensi pembelajaran yang sudah baik.</span>' ?>
+                    </div>
+                </div>
+                <div class="note-group" style="margin-top: 8px;">
+                    <div class="note-title" style="color: #1D4ED8;">💬 C. Refleksi Guru Terobservasi:</div>
+                    <div class="note-content">
+                        <?= !empty($session['notes_teacher_reflection']) ? '&bull; ' . nl2br(htmlspecialchars($session['notes_teacher_reflection'])) : '<span style="font-style: italic; color: #64748b;">- Refleksi pembelajaran terlaksana secara positif.</span>' ?>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TANDA TANGAN -->
+            <table class="signatures-table">
+                <tr>
+                    <td>
+                        Guru yang Dinilai,
+                        <div class="sign-space"></div>
+                        <div class="sign-name"><?= htmlspecialchars($session['signed_teacher_name'] ?: $session['teacher_name']) ?></div>
+                    </td>
+                    <td>
+                        Guru Observer,
+                        <div class="sign-space"></div>
+                        <div class="sign-name"><?= htmlspecialchars($session['signed_observer_name'] ?: $session['observer_name']) ?></div>
+                    </td>
+                    <td>
+                        Mengetahui,<br>Kepala Sekolah SMP An Nahl,
+                        <div class="sign-space" style="height: 36px;"></div>
+                        <div class="sign-name"><?= htmlspecialchars($session['signed_principal_name'] ?: 'Awang Darmawan, SS') ?></div>
+                    </td>
+                </tr>
+            </table>
+        </div>
+    </body>
+    </html>
+    <?php
+    exit;
+}
+
 
 
 // =========================================================================
@@ -816,7 +1380,7 @@ require_once __DIR__ . '/../../includes/header.php';
                                     <?= htmlspecialchars($s['observer_name']) ?>
                                 </td>
                                 <td style="padding: 14px 16px; color: #64748b; font-size: 12.5px;">
-                                    <?= htmlspecialchars($s['observation_date']) ?>
+                                    <?= htmlspecialchars(formatIndoDate($s['observation_date'])) ?>
                                 </td>
                                 <td style="padding: 14px 16px; text-align: center;">
                                     <div style="font-weight: 800; font-size: 14.5px; color: #0f172a;">
@@ -837,10 +1401,10 @@ require_once __DIR__ . '/../../includes/header.php';
                                         <button type="button" class="btn btn-sm" onclick="openCumulativeReportModal(<?= $s['teacher_id'] ?>)" title="Lembar Rangkuman Akumulasi Supervisi Gabungan (Sejawat & Kepsek)" style="background: #e0e7ff; color: #4338ca; font-weight: 700; border: 1px solid #c7d2fe; display: inline-flex; align-items: center; gap: 4px;">
                                             <i class="fa-solid fa-award"></i> Akumulasi
                                         </button>
-                                        <!-- TOMBOL CETAK PDF RESMI A4 -->
-                                        <button type="button" class="btn btn-sm btn-secondary" onclick="openPrintReportModal(<?= $s['id'] ?>)" title="Cetak Raport PDF Resmi" style="display: inline-flex; align-items: center; gap: 4px; font-weight: 600;">
+                                        <!-- TOMBOL CETAK PDF RESMI (BUKA TAB BARU STANDALONE) -->
+                                        <a href="reports.php?print_session=1&session_id=<?= $s['id'] ?>" target="_blank" class="btn btn-sm btn-secondary" title="Buka Raport Resmi di Halaman Baru (Cetak PDF)" style="display: inline-flex; align-items: center; gap: 4px; font-weight: 600; text-decoration: none;">
                                             <i class="fa-solid fa-file-lines"></i> Cetak PDF
-                                        </button>
+                                        </a>
 
                                         <form method="POST" style="display: inline;" onsubmit="return confirm('Apakah Anda yakin ingin menghapus data supervisi ini?');">
                                             <input type="hidden" name="action" value="delete_session">

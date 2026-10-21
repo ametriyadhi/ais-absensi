@@ -452,6 +452,19 @@ if (!function_exists('getSupervisionObservers')) {
     }
 }
 
+if (!function_exists('formatIndoDate')) {
+    function formatIndoDate(?string $dateStr): string {
+        if (empty($dateStr)) return '-';
+        $timestamp = strtotime($dateStr);
+        if (!$timestamp) return $dateStr;
+        $bulan = [
+            1 => 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+            'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+        ];
+        return date('j', $timestamp) . ' ' . $bulan[(int)date('n', $timestamp)] . ' ' . date('Y', $timestamp);
+    }
+}
+
 if (!function_exists('getSupervisionCumulativeData')) {
     function getSupervisionCumulativeData(PDO $pdo, int $teacherId): ?array {
         // 1. Teacher Info
