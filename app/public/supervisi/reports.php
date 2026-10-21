@@ -1038,6 +1038,12 @@ if (isset($_GET['print_session'])) {
             </div>
             <div class="header-accent-bar"></div>
 
+            <?php if ($session['status'] === 'draft'): ?>
+                <div style="background: #fef3c7; border: 1.5px dashed #f59e0b; color: #b45309; padding: 10px 16px; border-radius: 8px; margin-bottom: 14px; text-align: center; font-weight: 800; font-size: 13px;">
+                    ⚠️ DOKUMEN DRAF SEMENTARA (BELUM DIFINALISASI) &bull; SKOR & CATATAN MASIH DAPAT DILANJUTKAN / DIUBAH
+                </div>
+            <?php endif; ?>
+
             <!-- METADATA GRID -->
             <div class="meta-card">
                 <table class="meta-table">
@@ -1172,6 +1178,7 @@ if (isset($_GET['print_session'])) {
 $search = trim($_GET['search'] ?? '');
 $filterPred = trim($_GET['predicate'] ?? '');
 $filterType = (int)($_GET['type_id'] ?? 0);
+$filterStatus = trim($_GET['status'] ?? '');
 
 $query = "
     SELECT ss.*, 
@@ -1202,6 +1209,11 @@ if (!$isSuperAdmin && $userUnitId > 0) {
 if (!empty($filterPred)) {
     $query .= " AND ss.predicate_name = ?";
     $params[] = $filterPred;
+}
+
+if (!empty($filterStatus)) {
+    $query .= " AND ss.status = ?";
+    $params[] = $filterStatus;
 }
 
 if (!empty($search)) {
@@ -1299,7 +1311,7 @@ require_once __DIR__ . '/../../includes/header.php';
                 </select>
             </div>
 
-            <div style="width: 200px;">
+            <div style="width: 180px;">
                 <select name="type_id" class="form-control" onchange="this.form.submit()">
                     <option value="0">-- Semua Jenis --</option>
                     <?php foreach ($types as $t): ?>
@@ -1307,6 +1319,14 @@ require_once __DIR__ . '/../../includes/header.php';
                             <?= htmlspecialchars($t['name']) ?>
                         </option>
                     <?php endforeach; ?>
+                </select>
+            </div>
+
+            <div style="width: 160px;">
+                <select name="status" class="form-control" onchange="this.form.submit()">
+                    <option value="">-- Semua Status --</option>
+                    <option value="completed" <?= ($filterStatus === 'completed') ? 'selected' : '' ?>>Hanya Selesai</option>
+                    <option value="draft" <?= ($filterStatus === 'draft') ? 'selected' : '' ?>>Hanya Draf</option>
                 </select>
             </div>
 
@@ -1391,25 +1411,46 @@ require_once __DIR__ . '/../../includes/header.php';
                                     </div>
                                 </td>
                                 <td style="padding: 14px 16px; text-align: center;">
-                                    <span style="background: <?= $badgeColor ?>15; color: <?= $badgeColor ?>; border: 1px solid <?= $badgeColor ?>40; font-weight: 800; font-size: 12px; padding: 4px 12px; border-radius: 20px; display: inline-block;">
-                                        <?= htmlspecialchars($s['predicate_name']) ?>
-                                    </span>
+                                    <?php if ($s['status'] === 'draft'): ?>
+                                        <span style="background: #fef3c7; color: #b45309; border: 1px solid #fde68a; font-weight: 800; font-size: 11.5px; padding: 4px 10px; border-radius: 20px; display: inline-flex; align-items: center; gap: 4px;">
+                                            <i class="fa-solid fa-clock-rotate-left"></i> DRAF
+                                        </span>
+                                    <?php else: ?>
+                                        <span style="background: <?= $badgeColor ?>15; color: <?= $badgeColor ?>; border: 1px solid <?= $badgeColor ?>40; font-weight: 800; font-size: 12px; padding: 4px 12px; border-radius: 20px; display: inline-block;">
+                                            <?= htmlspecialchars($s['predicate_name']) ?>
+                                        </span>
+                                    <?php endif; ?>
                                 </td>
                                 <td style="padding: 14px 18px; text-align: right;">
                                     <div style="display: inline-flex; align-items: center; gap: 6px;">
-                                                                                <!-- TOMBOL LEMBAR RANGKUMAN AKUMULASI GABUNGAN -->
-                                        <button type="button" class="btn btn-sm" onclick="openCumulativeReportModal(<?= $s['teacher_id'] ?>)" title="Lembar Rangkuman Akumulasi Supervisi Gabungan (Sejawat & Kepsek)" style="background: #e0e7ff; color: #4338ca; font-weight: 700; border: 1px solid #c7d2fe; display: inline-flex; align-items: center; gap: 4px;">
-                                            <i class="fa-solid fa-award"></i> Akumulasi
-                                        </button>
+                                        <?php 
+                                        $editUrl = ($s['type_key'] === 'peer') ? "peer.php?session_id={$s['id']}" : "principal.php?session_id={$s['id']}";
+                                        ?>
+                                        <?php if ($s['status'] === 'draft'): ?>
+                                            <!-- TOMBOL LANJUTKAN PENILAIAN DRAF -->
+                                            <a href="<?= $editUrl ?>" class="btn btn-sm btn-warning" title="Lanjutkan Pengisian Nilai Supervisi" style="background: #f59e0b; border-color: #f59e0b; color: white; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; border-radius: 6px; text-decoration: none;">
+                                                <i class="fa-solid fa-pen-to-square"></i> Lanjutkan
+                                            </a>
+                                        <?php else: ?>
+                                            <!-- TOMBOL EDIT DOKUMEN -->
+                                            <a href="<?= $editUrl ?>" class="btn btn-sm btn-secondary" title="Ubah / Edit Dokumen Supervisi" style="font-weight: 600; display: inline-flex; align-items: center; gap: 4px; padding: 5px 8px; border-radius: 6px; text-decoration: none;">
+                                                <i class="fa-solid fa-pen"></i>
+                                            </a>
+                                            <!-- TOMBOL LEMBAR RANGKUMAN AKUMULASI GABUNGAN -->
+                                            <button type="button" class="btn btn-sm" onclick="openCumulativeReportModal(<?= $s['teacher_id'] ?>)" title="Lembar Rangkuman Akumulasi Supervisi Gabungan (Sejawat & Kepsek)" style="background: #e0e7ff; color: #4338ca; font-weight: 700; border: 1px solid #c7d2fe; display: inline-flex; align-items: center; gap: 4px; padding: 5px 9px; border-radius: 6px;">
+                                                <i class="fa-solid fa-award"></i> Akumulasi
+                                            </button>
+                                        <?php endif; ?>
+
                                         <!-- TOMBOL CETAK PDF RESMI (BUKA TAB BARU STANDALONE) -->
-                                        <a href="reports.php?print_session=1&session_id=<?= $s['id'] ?>" target="_blank" class="btn btn-sm btn-secondary" title="Buka Raport Resmi di Halaman Baru (Cetak PDF)" style="display: inline-flex; align-items: center; gap: 4px; font-weight: 600; text-decoration: none;">
+                                        <a href="reports.php?print_session=1&session_id=<?= $s['id'] ?>" target="_blank" class="btn btn-sm btn-secondary" title="Buka Raport Resmi di Halaman Baru (Cetak PDF)" style="display: inline-flex; align-items: center; gap: 4px; font-weight: 600; text-decoration: none; padding: 5px 9px; border-radius: 6px;">
                                             <i class="fa-solid fa-file-lines"></i> Cetak PDF
                                         </a>
 
                                         <form method="POST" style="display: inline;" onsubmit="return confirm('Apakah Anda yakin ingin menghapus data supervisi ini?');">
                                             <input type="hidden" name="action" value="delete_session">
                                             <input type="hidden" name="session_id" value="<?= $s['id'] ?>">
-                                            <button type="submit" class="btn btn-sm btn-danger" title="Hapus Dokumen">
+                                            <button type="submit" class="btn btn-sm btn-danger" title="Hapus Dokumen" style="padding: 5px 8px; border-radius: 6px;">
                                                 <i class="fa-solid fa-trash"></i>
                                             </button>
                                         </form>

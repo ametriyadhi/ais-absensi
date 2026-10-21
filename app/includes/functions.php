@@ -483,7 +483,7 @@ if (!function_exists('getSupervisionCumulativeData')) {
             SELECT ss.*, u.name as observer_name
             FROM supervision_sessions ss
             JOIN users u ON u.id = ss.observer_id
-            WHERE ss.teacher_id = ? AND ss.type_id = 1
+            WHERE ss.teacher_id = ? AND ss.type_id = 1 AND ss.status = 'completed'
             ORDER BY ss.observation_date DESC, ss.id DESC LIMIT 1
         ");
         $stmtPeer->execute([$teacherId]);
@@ -494,7 +494,7 @@ if (!function_exists('getSupervisionCumulativeData')) {
             SELECT ss.*, u.name as observer_name
             FROM supervision_sessions ss
             JOIN users u ON u.id = ss.observer_id
-            WHERE ss.teacher_id = ? AND ss.type_id = 2
+            WHERE ss.teacher_id = ? AND ss.type_id = 2 AND ss.status = 'completed'
             ORDER BY ss.observation_date DESC, ss.id DESC LIMIT 1
         ");
         $stmtKepsek->execute([$teacherId]);

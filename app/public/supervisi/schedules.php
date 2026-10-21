@@ -102,11 +102,13 @@ $query = "
     SELECT ss.*, 
            st.name as type_name, st.type_key,
            s.name as teacher_name, s.nik as teacher_nik, s.unit_id as teacher_unit_id,
-           u.name as observer_name
+           u.name as observer_name,
+           sess.id as session_id, sess.status as session_status
     FROM supervision_schedules ss
     JOIN supervision_types st ON st.id = ss.type_id
     JOIN staff s ON s.id = ss.teacher_id
     JOIN users u ON u.id = ss.observer_id
+    LEFT JOIN supervision_sessions sess ON sess.schedule_id = ss.id
     WHERE 1=1
 ";
 $params = [];
@@ -308,12 +310,20 @@ require_once __DIR__ . '/../../includes/header.php';
                                 </td>
                                 <td style="padding: 14px 16px; text-align: right;">
                                     <div style="display: inline-flex; align-items: center; gap: 6px;">
-                                        <?php if ($isCompleted): ?>
+                                        <?php if (!empty($sc['session_id']) && $sc['session_status'] === 'draft'): ?>
+                                            <!-- DRAF SUDAH ADA: TOMBOL LANJUTKAN DRAF -->
+                                            <?php 
+                                            $resumeUrl = ($sc['type_key'] === 'peer') ? "peer.php?session_id={$sc['session_id']}" : "principal.php?session_id={$sc['session_id']}";
+                                            ?>
+                                            <a href="<?= $resumeUrl ?>" class="btn btn-sm btn-warning" style="background: #f59e0b; border-color: #f59e0b; color: white; font-weight: 700; display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; border-radius: 6px; text-decoration: none;" title="Lanjutkan Pengisian Draf Supervisi">
+                                                <i class="fa-solid fa-clock-rotate-left"></i> Lanjutkan Draf
+                                            </a>
+                                        <?php elseif ($isCompleted || (!empty($sc['session_id']) && $sc['session_status'] === 'completed')): ?>
                                             <span style="background: #dcfce7; color: #15803d; font-size: 11px; font-weight: 700; padding: 5px 10px; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px;">
                                                 <i class="fa-solid fa-check-circle"></i> Selesai
                                             </span>
                                         <?php else: ?>
-                                            <!-- TOMBOL HIJAU NILAI SEKARANG SESUAI SCREENSHOT 4 -->
+                                            <!-- BELUM DIMULAI: TOMBOL NILAI SEKARANG -->
                                             <a href="<?= $evalUrl ?>" class="btn btn-sm btn-success" style="background: #10b981; border-color: #10b981; color: white; font-weight: 700; display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; border-radius: 6px; text-decoration: none;">
                                                 <i class="fa-solid fa-plus"></i> Nilai Sekarang
                                             </a>
