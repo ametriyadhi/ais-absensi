@@ -329,7 +329,7 @@ require_once __DIR__ . '/../../includes/header.php';
                                             </a>
                                         <?php endif; ?>
 
-                                        <button type="button" class="btn btn-sm btn-secondary" onclick='openEditScheduleModal(<?= json_encode($sc) ?>)' title="Edit Jadwal">
+                                        <button type="button" class="btn btn-sm btn-secondary" onclick='openEditScheduleModal(<?= json_encode($sc, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>)' title="Edit Jadwal">
                                             <i class="fa-solid fa-pen"></i>
                                         </button>
 
@@ -386,6 +386,7 @@ require_once __DIR__ . '/../../includes/header.php';
                                 </span>
                             <?php endif; ?>
                         </label>
+                        <input type="text" id="teacherSearchFilter" placeholder="Cari nama guru..." class="form-control" style="margin-bottom: 6px; font-size: 13px;" onkeyup="filterTeacherOptions(this.value)">
                         <select name="teacher_id" id="schedTeacherSelect" class="form-control" required>
                             <option value="">-- Pilih Guru --</option>
                             <?php if ($isSuperAdmin && empty($userUnitId)): ?>
@@ -522,6 +523,24 @@ function closeModal(id) {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
 }
+
+<script>
+function filterTeacherOptions(keyword) {
+    const term = keyword.toLowerCase();
+    const select = document.getElementById('schedTeacherSelect');
+    const options = select.options;
+    for (let i = 0; i < options.length; i++) {
+        const opt = options[i];
+        if (opt.value === "") continue;
+        const text = opt.text.toLowerCase();
+        if (text.includes(term)) {
+            opt.style.display = "";
+        } else {
+            opt.style.display = "none";
+        }
+    }
+}
+</script>
 </script>
 
 <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
