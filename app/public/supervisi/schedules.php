@@ -420,7 +420,7 @@ require_once __DIR__ . '/../../includes/header.php';
                                 <?php endforeach; ?>
                             </select>
                         <?php else: ?>
-                            <input type="hidden" name="observer_id" id="schedObserverSelect" value="<?= $currentUserId ?>">
+                            <input type="hidden" name="observer_id" id="schedObserverHidden" value="<?= $currentUserId ?>">
                             <div class="form-control" style="background: #f8fafc; font-weight: 700; color: #1e293b; display: flex; align-items: center; justify-content: space-between; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 10px 14px;">
                                 <span><i class="fa-solid fa-user-check" style="color: #10b981; margin-right: 6px;"></i> <?= htmlspecialchars($_SESSION['name'] ?? 'Akun Anda') ?></span>
                                 <span class="badge" style="background: #e0e7ff; color: #4338ca; font-size: 10px; padding: 2px 6px; border-radius: 4px;">Akun Anda</span>
