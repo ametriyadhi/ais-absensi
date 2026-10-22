@@ -524,7 +524,6 @@ function closeModal(id) {
     if (el) el.style.display = 'none';
 }
 
-<script>
 function filterTeacherOptions(keyword) {
     const term = keyword.toLowerCase();
     const select = document.getElementById('schedTeacherSelect');
@@ -540,7 +539,6 @@ function filterTeacherOptions(keyword) {
         }
     }
 }
-</script>
 </script>
 
 <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
