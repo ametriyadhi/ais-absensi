@@ -490,7 +490,7 @@ function openAddScheduleModal() {
     document.getElementById('schedActionInput').value = 'add_schedule';
     document.getElementById('schedIdInput').value = '';
     document.getElementById('schedTeacherSelect').value = '';
-    document.getElementById('schedObserverSelect').value = '<?= $currentUserId ?>';
+    const elObs = document.getElementById('schedObserverSelect'); if (elObs) elObs.value = '<?= $currentUserId ?>';
     document.getElementById('schedSubjectInput').value = '';
     document.getElementById('schedClassInput').value = '';
     document.getElementById('schedDateInput').value = '<?= date('Y-m-d') ?>';
@@ -507,7 +507,7 @@ function openEditScheduleModal(sc) {
     document.getElementById('schedIdInput').value = sc.id;
     document.getElementById('schedTypeSelect').value = sc.type_id;
     document.getElementById('schedTeacherSelect').value = sc.teacher_id;
-    document.getElementById('schedObserverSelect').value = sc.observer_id;
+    const elObs2 = document.getElementById('schedObserverSelect'); if (elObs2) elObs2.value = sc.observer_id;
     document.getElementById('schedSubjectInput').value = sc.subject_name;
     document.getElementById('schedClassInput').value = sc.class_name;
     document.getElementById('schedDateInput').value = sc.scheduled_date;
