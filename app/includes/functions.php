@@ -276,6 +276,39 @@ if (!function_exists('hasMenuAccess')) {
 // ACCESS CONTROL SISWA (Filter berdasarkan izin unit/grade/kelas)
 // =========================================================================
 
+if (!function_exists('getMentoringAccessCondition')) {
+    // Scoping unit untuk halaman Mentoring (MIP): super_admin & admin = semua unit;
+    // lainnya dibatasi unit staff / admin_unit_permissions / grade & class permissions.
+    function getMentoringAccessCondition($gradeAlias = 'g', $classAlias = 'cg') {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+        if (in_array(($_SESSION['role'] ?? ''), ['super_admin', 'admin'], true)) {
+            return ['condition' => '1 = 1', 'params' => []];
+        }
+        return getStudentAccessCondition($gradeAlias, $classAlias);
+    }
+}
+
+if (!function_exists('getMentoringGradeCondition')) {
+    // Variant hanya-untuk-tabel-grades (tanpa alias class_groups).
+    function getMentoringGradeCondition($gradeAlias = 'g') {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+        if (in_array(($_SESSION['role'] ?? ''), ['super_admin', 'admin'], true)) {
+            return ['condition' => '1 = 1', 'params' => []];
+        }
+        $uid = currentUserId();
+        $condition = "({$gradeAlias}.unit_id IN (SELECT unit_id FROM admin_unit_permissions WHERE user_id = ?)
+            OR {$gradeAlias}.id IN (SELECT grade_id FROM admin_grade_permissions WHERE user_id = ?)
+            OR {$gradeAlias}.unit_id IN (SELECT unit_id FROM staff WHERE user_id = ? AND unit_id IS NOT NULL)
+            OR EXISTS (SELECT 1 FROM class_groups cgx WHERE cgx.grade_id = {$gradeAlias}.id
+                AND cgx.id IN (SELECT class_group_id FROM admin_class_permissions WHERE user_id = ?)))";
+        return ['condition' => $condition, 'params' => [$uid, $uid, $uid, $uid]];
+    }
+}
+
 if (!function_exists('getStudentAccessCondition')) {
     function getStudentAccessCondition($gradeAlias = 'g', $classAlias = 'cg') {
         if (session_status() === PHP_SESSION_NONE) {
