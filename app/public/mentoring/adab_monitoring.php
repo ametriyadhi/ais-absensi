@@ -12,10 +12,27 @@ if (($_SESSION['role'] ?? '') === 'siswa') {
 }
 requireMenuAccess('mentoring_adab');
 
+// ── Gate akses: guru hanya boleh masuk jika diberi izin oleh kepala_sekolah ──
+$checkRole = currentRole();
+$checkUserId = currentUserId();
+if (!in_array($checkRole, ['super_admin', 'admin', 'kepala_sekolah'], true)) {
+    if (!function_exists('canTeacherAccessMentoring') || !canTeacherAccessMentoring($pdo, (int)$checkUserId)) {
+        require_once __DIR__ . '/../../includes/header.php';
+        echo '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;text-align:center;padding:32px;">';
+        echo '<div style="font-size:56px;margin-bottom:16px;">&#x1F512;</div>';
+        echo '<h2 style="color:#0f172a;margin-bottom:8px;">Akses Belum Diizinkan</h2>';
+        echo '<p style="color:#64748b;max-width:420px;line-height:1.6;">Anda belum memiliki izin untuk mengakses modul <strong>Kelola Mentoring</strong>.<br>Silakan hubungi <strong>Kepala Sekolah</strong> Anda untuk mendapatkan akses.</p>';
+        echo '</div>';
+        require_once __DIR__ . '/../../includes/footer.php';
+        exit;
+    }
+}
+
+
 $pageTitle = 'Pemantauan Pembiasaan Adab & Refleksi Santri';
 $currentRole = currentRole();
 $userId = currentUserId();
-$isPrivileged = in_array($currentRole, ['super_admin', 'admin', 'kepala_sekolah']) || hasMenuAccess('mentoring_assignments') || hasMenuAccess('mentoring_report');
+$isPrivileged = in_array($currentRole, ['super_admin', 'admin', 'kepala_sekolah'], true);
 
 // FILTER PARAMETERS
 $filterClass  = trim($_GET['class'] ?? '');

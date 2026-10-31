@@ -9,6 +9,36 @@ requireLogin();
 
 requireMenuAccess('mentoring_assignments');
 
+// ── PROTEKSI KETAT PEMBUATAN KELOMPOK MENTORING ────────────────────────────
+// HANYA Kepala Sekolah dan Super Admin yang berhak mengelola dan membuat kelompok mentoring.
+// Guru / Staff (meskipun diberi izin mentoring untuk mengisi jurnal) DILARANG membuat kelompok.
+$currentRole = currentRole();
+$currentUserId = currentUserId();
+
+$canManageAssignments = in_array($currentRole, ['super_admin', 'kepala_sekolah'], true);
+
+// Tambahan: Pastikan akun staf (meskipun tercatat dengan role admin unit) tidak dapat bypass
+if ($currentRole === 'admin') {
+    // Cek apakah akun ini terdaftar sebagai guru/staff biasa di tabel staff
+    try {
+        $stmtStaff = $pdo->prepare("SELECT id FROM staff WHERE user_id = ? LIMIT 1");
+        $stmtStaff->execute([$currentUserId]);
+        if ($stmtStaff->fetchColumn()) {
+            $canManageAssignments = false;
+        } else {
+            $canManageAssignments = true; // Super admin murni tanpa data staff
+        }
+    } catch (Exception $e) {
+        $canManageAssignments = false;
+    }
+}
+
+if (!$canManageAssignments) {
+    flash('error', 'Akses terbatas: Pembuatan dan pengelolaan kelompok mentoring hanya dapat dilakukan oleh Kepala Sekolah.');
+    redirect('index.php');
+    exit;
+}
+
 $pageTitle = 'Pengaturan Kelompok Mentee & Mentor';
 
 // ==========================================

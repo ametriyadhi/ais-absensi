@@ -6,11 +6,34 @@ require_once __DIR__ . '/../../config/security.php';
 require_once __DIR__ . '/../../includes/functions.php';
 
 requireLogin();
-requireMenuAccess('supervisi_kepsek');
+
+$currentUserId = (int)currentUserId();
+$currentRole = (string)currentRole();
+
+// Cek akses khusus untuk penerima mandat Kepala Sekolah (delegated_user_id)
+$checkSchedId = (int)($_GET['schedule_id'] ?? ($_POST['schedule_id'] ?? 0));
+$checkSessId = (int)($_GET['session_id'] ?? ($_POST['session_id'] ?? 0));
+$isDelegatedUser = false;
+
+if ($checkSchedId > 0) {
+    $stmtDel = $pdo->prepare("SELECT 1 FROM supervision_schedules WHERE id = ? AND delegated_user_id = ?");
+    $stmtDel->execute([$checkSchedId, $currentUserId]);
+    if ($stmtDel->fetchColumn()) $isDelegatedUser = true;
+} elseif ($checkSessId > 0) {
+    $stmtDel = $pdo->prepare("
+        SELECT 1 FROM supervision_sessions ss
+        JOIN supervision_schedules sc ON sc.id = ss.schedule_id
+        WHERE ss.id = ? AND (sc.delegated_user_id = ? OR ss.observer_id = ?)
+    ");
+    $stmtDel->execute([$checkSessId, $currentUserId, $currentUserId]);
+    if ($stmtDel->fetchColumn()) $isDelegatedUser = true;
+}
+
+if (!$isDelegatedUser) {
+    requireMenuAccess('supervisi_kepsek');
+}
 
 $pageTitle = 'Supervisi Pembelajaran Kepala Sekolah';
-$currentUserId = currentUserId();
-$currentRole = currentRole();
 
 // Ambil type_id = 2 (principal)
 $typeId = 2;
@@ -24,6 +47,12 @@ $scheduleId = (int)($_GET['schedule_id'] ?? 0);
 $editSession = null;
 $savedScores = [];
 
+// WAJIB TERIKAT JADWAL: Penilaian tanpa jadwal dilarang
+if ($sessionId <= 0 && $scheduleId <= 0 && $_SERVER['REQUEST_METHOD'] !== 'POST') {
+    flash('warning', 'Penilaian supervisi Kepala Sekolah wajib dimulai dari Jadwal Supervisi yang telah terdaftar. Silakan pilih jadwal Anda di bawah ini.');
+    redirect('schedules.php');
+}
+
 if ($sessionId > 0) {
     $stmtSess = $pdo->prepare("SELECT * FROM supervision_sessions WHERE id = ? AND type_id = ? LIMIT 1");
     $stmtSess->execute([$sessionId, $typeId]);
@@ -32,8 +61,8 @@ if ($sessionId > 0) {
         flash('error', 'Dokumen supervisi tidak ditemukan.');
         redirect('reports.php');
     }
-    // Proteksi otorisasi observer
-    if (!in_array($currentRole, ['super_admin', 'admin'], true) && $editSession['observer_id'] != $currentUserId) {
+    // Proteksi otorisasi observer (termasuk penerima mandat)
+    if (!in_array($currentRole, ['super_admin', 'admin', 'kepala_sekolah'], true) && $editSession['observer_id'] != $currentUserId && !$isDelegatedUser) {
         flash('error', 'Anda tidak memiliki hak akses untuk mengubah dokumen supervisi ini.');
         redirect('reports.php');
     }
@@ -45,18 +74,84 @@ if ($sessionId > 0) {
     $savedScores = $stmtScores->fetchAll(PDO::FETCH_KEY_PAIR);
 }
 
-// 2. Cek jika ada schedule_id yang diteruskan dari halaman Jadwal
+// 2. Ambil metadata schedule_id yang diteruskan atau terhubung dengan sesi
 $prefillSchedule = null;
-if ($scheduleId > 0 && !$editSession) {
+if ($scheduleId > 0) {
     $stmtSched = $pdo->prepare("
-        SELECT ss.*, s.name as teacher_name, u.name as observer_name
+        SELECT ss.*, s.name as teacher_name, u.name as observer_name,
+               up.name as principal_name, ud.name as delegated_name
         FROM supervision_schedules ss
         LEFT JOIN staff s ON s.id = ss.teacher_id
         LEFT JOIN users u ON u.id = ss.observer_id
+        LEFT JOIN users up ON up.id = ss.principal_id
+        LEFT JOIN users ud ON ud.id = ss.delegated_user_id
         WHERE ss.id = ? LIMIT 1
     ");
     $stmtSched->execute([$scheduleId]);
     $prefillSchedule = $stmtSched->fetch(PDO::FETCH_ASSOC);
+
+    if (!$prefillSchedule && !$editSession) {
+        flash('error', 'Jadwal supervisi tidak ditemukan.');
+        redirect('schedules.php');
+    }
+
+    // Otorisasi Penilai Kepsek: super_admin, admin, kepala_sekolah, ditunjuk sebagai principal_id atau delegated_user_id
+    if ($prefillSchedule && !$editSession) {
+        $isSuperUser = in_array($currentRole, ['super_admin', 'admin', 'kepala_sekolah'], true);
+        $isAssignedPrincipal = ((int)$prefillSchedule['principal_id'] === $currentUserId);
+        $isAssignedDelegated = ((int)$prefillSchedule['delegated_user_id'] === $currentUserId);
+
+        if (!$isSuperUser && !$isAssignedPrincipal && !$isAssignedDelegated) {
+            flash('error', 'Akses ditolak: Anda tidak memiliki wewenang atau mandat untuk mengisi penilaian Kepala Sekolah pada jadwal supervisi ini.');
+            redirect('schedules.php');
+        }
+    }
+}
+
+// 3. Evaluasi Kunci Jam (Time-Lock) & Izin Edit (Edit-Lock)
+$isTimeLocked = false;
+$timeLockMsg = '';
+$isEditLocked = false;
+$editLockMsg = '';
+
+$checkScheduleId = $scheduleId ?: (int)($_POST['schedule_id'] ?? 0);
+$schedData = null;
+if ($checkScheduleId > 0) {
+    $stmtScCheck = $pdo->prepare("SELECT * FROM supervision_schedules WHERE id = ?");
+    $stmtScCheck->execute([$checkScheduleId]);
+    $schedData = $stmtScCheck->fetch(PDO::FETCH_ASSOC);
+}
+
+if ($schedData) {
+    $timeStatus = getSupervisionTimeLockStatus(
+        $schedData['scheduled_date'],
+        $schedData['time_start'],
+        $schedData['time_end'],
+        (int)$schedData['bypass_time_lock']
+    );
+    $isTimeLocked = $timeStatus['is_locked'];
+    $timeLockMsg = $timeStatus['lock_message'];
+}
+
+$isCompletedSession = ($editSession && $editSession['status'] === 'completed');
+if ($isCompletedSession) {
+    $isPrivilegedUser = in_array($currentRole, ['super_admin', 'kepala_sekolah', 'admin'], true);
+    $hasAllowEdit = ($schedData && (int)$schedData['allow_edit'] === 1);
+    if (!$isPrivilegedUser && !$hasAllowEdit) {
+        $isEditLocked = true;
+        $editLockMsg = "Dokumen supervisi ini telah diselesaikan dan terkunci secara permanen. Pengubahan data hanya dapat dilakukan jika Kepala Sekolah mengaktifkan 'Izin Edit' pada jadwal supervisi terkait.";
+    }
+}
+$isFormLocked = ($isTimeLocked || $isEditLocked);
+
+// Proteksi Waktu Sesi (Sebelum jam atau Lewat jam)
+if (!$isCompletedSession && $isTimeLocked && $_SERVER['REQUEST_METHOD'] !== 'POST') {
+    flash('error', $timeLockMsg);
+    redirect('schedules.php');
+}
+if ($isCompletedSession && $isEditLocked && $_SERVER['REQUEST_METHOD'] !== 'POST') {
+    flash('error', $editLockMsg);
+    redirect('reports.php');
 }
 
 // =========================================================================
@@ -65,6 +160,21 @@ if ($scheduleId > 0 && !$editSession) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'save_principal_supervision') {
     $sessId = (int)($_POST['session_id'] ?? 0);
     $schedId = !empty($_POST['schedule_id']) ? (int)$_POST['schedule_id'] : null;
+
+    if (empty($schedId) && empty($sessId)) {
+        flash('error', 'Penilaian supervisi Kepala Sekolah wajib terikat dengan jadwal supervisi yang sah.');
+        redirect('schedules.php');
+    }
+
+    if ($isTimeLocked) {
+        flash('error', $timeLockMsg);
+        redirect('principal.php' . ($sessId ? "?session_id={$sessId}" : ($schedId ? "?schedule_id={$schedId}" : '')));
+    }
+    if ($isEditLocked) {
+        flash('error', $editLockMsg);
+        redirect('principal.php' . ($sessId ? "?session_id={$sessId}" : ($schedId ? "?schedule_id={$schedId}" : '')));
+    }
+
     $submitAction = $_POST['submit_action'] ?? 'save_completed';
     $isDraft = ($submitAction === 'save_draft');
     $sessionStatus = $isDraft ? 'draft' : 'completed';
@@ -164,6 +274,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $stmtOName->execute([$observerId]);
     $signedObserverName = $stmtOName->fetchColumn() ?: 'Kepala Sekolah';
 
+    // Cek mandat & nama kepala sekolah resmi
+    $isDelegatedSession = 0;
+    $actualPrincipalName = 'Kepala Sekolah';
+    $principalUserId = 0;
+    if ($schedData) {
+        if (!empty($schedData['delegated_user_id']) && (int)$schedData['delegated_user_id'] === $currentUserId) {
+            $isDelegatedSession = 1;
+        }
+        if (!empty($schedData['principal_id'])) {
+            $principalUserId = (int)$schedData['principal_id'];
+            $stmtP = $pdo->prepare("SELECT name FROM users WHERE id = ?");
+            $stmtP->execute([$principalUserId]);
+            $pName = $stmtP->fetchColumn();
+            if ($pName) $actualPrincipalName = $pName;
+        }
+    }
+
+    $signedPrincipalStr = ($isDelegatedSession === 1) 
+        ? ($actualPrincipalName . ' (Mandat: ' . $signedObserverName . ')') 
+        : $actualPrincipalName;
+
     // SIMPAN KE DATABASE DENGAN TRANSAKSI
     $pdo->beginTransaction();
     try {
@@ -171,19 +302,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             // UPDATE
             $stmtUpd = $pdo->prepare("
                 UPDATE supervision_sessions SET
-                    schedule_id = ?, status = ?, teacher_id = ?, observer_id = ?,
+                    schedule_id = ?, status = ?, is_delegated = ?, teacher_id = ?, observer_id = ?,
                     subject_name = ?, class_name = ?, observation_date = ?, room_location = ?,
                     total_score = ?, max_possible_score = ?, percentage_score = ?,
                     predicate_name = ?, notes_good_practice = ?, notes_growth_plan = ?,
-                    notes_teacher_reflection = ?, signed_teacher_name = ?, signed_observer_name = ?
+                    notes_teacher_reflection = ?, signed_teacher_name = ?, signed_observer_name = ?,
+                    signed_principal_name = ?
                 WHERE id = ?
             ");
             $stmtUpd->execute([
-                $schedId, $sessionStatus, $teacherId, $observerId,
+                $schedId, $sessionStatus, $isDelegatedSession, $teacherId, $observerId,
                 $subjectName, $className, $obsDate, $roomLocation,
                 $totalScore, $maxPossibleScore, $percentageScore,
                 $predicateName, $notesGood, $notesGrowth,
                 $notesReflection, $signedTeacherName, $signedObserverName,
+                $signedPrincipalStr,
                 $sessId
             ]);
             $sessionId = $sessId;
@@ -193,22 +326,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             // INSERT
             $stmtInsert = $pdo->prepare("
                 INSERT INTO supervision_sessions (
-                    schedule_id, status, type_id, teacher_id, observer_id, subject_name, class_name,
+                    schedule_id, status, is_delegated, type_id, teacher_id, observer_id, subject_name, class_name,
                     observation_date, room_location, total_score, max_possible_score, percentage_score,
                     predicate_name, notes_good_practice, notes_growth_plan, notes_teacher_reflection,
                     signed_teacher_name, signed_observer_name, signed_principal_name
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?,
-                    ?, ?, 'Awang Darmawan, SS'
+                    ?, ?, ?
                 )
             ");
             $stmtInsert->execute([
-                $schedId, $sessionStatus, $typeId, $teacherId, $observerId, $subjectName, $className,
+                $schedId, $sessionStatus, $isDelegatedSession, $typeId, $teacherId, $observerId, $subjectName, $className,
                 $obsDate, $roomLocation, $totalScore, $maxPossibleScore, $percentageScore,
                 $predicateName, $notesGood, $notesGrowth, $notesReflection,
-                $signedTeacherName, $signedObserverName
+                $signedTeacherName, $signedObserverName, $signedPrincipalStr
             ]);
             $sessionId = (int)$pdo->lastInsertId();
         }
@@ -229,6 +362,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             flash('success', "Draf supervisi Kepala Sekolah untuk {$signedTeacherName} berhasil disimpan sementara. Anda dapat melanjutkan penilaian kapan saja.");
             redirect("principal.php?session_id={$sessionId}");
         } else {
+            // Kirim notifikasi hasil supervisi selesai
+            try {
+                // 1. Notif ke guru yang dinilai
+                $stmtTUser = $pdo->prepare("SELECT user_id, name FROM staff WHERE id = ?");
+                $stmtTUser->execute([$teacherId]);
+                $tStaffRow = $stmtTUser->fetch(PDO::FETCH_ASSOC);
+                if ($tStaffRow && !empty($tStaffRow['user_id'])) {
+                    createNotification(
+                        $pdo, 
+                        (int)$tStaffRow['user_id'], 
+                        'supervisi', 
+                        'Supervisi Kepala Sekolah Selesai', 
+                        "Dokumen supervisi Kepala Sekolah untuk mata pelajaran {$subjectName} telah selesai dinilai dengan predikat {$predicateName} ({$percentageScore}%).", 
+                        "supervisi/reports.php"
+                    );
+                }
+
+                // 2. Jika penilaian dilakukan oleh guru penerima mandat, notif Kepala Sekolah
+                if ($isDelegatedSession === 1 && $principalUserId > 0) {
+                    createNotification(
+                        $pdo,
+                        $principalUserId,
+                        'supervisi',
+                        'Laporan Mandat Supervisi Selesai',
+                        "Guru penerima mandat ({$signedObserverName}) telah menyelesaikan penilaian supervisi Kepala Sekolah untuk {$signedTeacherName} (Mapel: {$subjectName}) dengan predikat {$predicateName} ({$percentageScore}%).",
+                        "supervisi/reports.php"
+                    );
+                }
+            } catch (Throwable $e) {
+                error_log("Principal supervision completion notification error: " . $e->getMessage());
+            }
+
             flash('success', "Dokumen Supervisi Kepala Sekolah untuk {$signedTeacherName} berhasil difinalisasi & disimpan resmi dengan predikat: {$predicateName} ({$percentageScore}%).");
             redirect('reports.php');
         }
@@ -350,15 +515,39 @@ require_once __DIR__ . '/../../includes/header.php';
                 </span>
             </div>
             <div style="display: flex; gap: 8px; align-items: center;">
-                <button type="button" class="btn btn-warning" onclick="submitAsDraft()" style="background: #f59e0b; border-color: #f59e0b; color: white; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; padding: 9px 15px; border-radius: 8px;" title="Simpan penilaian sementara dan lanjutkan nanti">
+                <button type="button" class="btn btn-warning" onclick="submitAsDraft()" <?= $isFormLocked ? 'disabled style="background: #94a3b8; border-color: #94a3b8; color: white; opacity: 0.6; cursor: not-allowed; padding: 9px 15px; border-radius: 8px;"' : 'style="background: #f59e0b; border-color: #f59e0b; color: white; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; padding: 9px 15px; border-radius: 8px;"' ?> title="<?= $isFormLocked ? 'Form terkunci' : 'Simpan penilaian sementara dan lanjutkan nanti' ?>">
                     <i class="fa-solid fa-file-pen"></i> Simpan Draf
                 </button>
-                <button type="button" class="btn btn-primary" onclick="submitAsCompleted()" style="background: #9333ea; border-color: #9333ea; display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: 8px; font-weight: 700;" title="Finalisasi dokumen supervisi">
+                <button type="button" class="btn btn-primary" onclick="submitAsCompleted()" <?= $isFormLocked ? 'disabled style="background: #94a3b8; border-color: #94a3b8; opacity: 0.6; cursor: not-allowed; padding: 9px 16px; border-radius: 8px;"' : 'style="background: #9333ea; border-color: #9333ea; display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: 8px; font-weight: 700;"' ?> title="<?= $isFormLocked ? 'Form terkunci' : 'Finalisasi dokumen supervisi' ?>">
                     <i class="fa-solid fa-check-double"></i> Selesaikan Penilaian
                 </button>
             </div>
         </div>
     </div>
+
+    <?php if ($isTimeLocked): ?>
+        <!-- BANNER KUNCI JAM (TIME-LOCK) -->
+        <div style="background: #fffbeb; border: 1.5px solid #fde68a; border-left: 5px solid #f59e0b; padding: 16px 20px; border-radius: 10px; margin-bottom: 24px; color: #92400e; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+            <div style="font-weight: 800; font-size: 14.5px; display: flex; align-items: center; gap: 8px;">
+                <i class="fa-solid fa-clock-rotate-left" style="font-size: 18px;"></i> Jadwal Supervisi Belum Dimulai (Form Terkunci)
+            </div>
+            <p style="margin: 6px 0 0; font-size: 13px; line-height: 1.5;">
+                <?= htmlspecialchars($timeLockMsg) ?>
+            </p>
+        </div>
+    <?php endif; ?>
+
+    <?php if ($isEditLocked): ?>
+        <!-- BANNER IZIN EDIT TERKUNCI (EDIT-LOCK) -->
+        <div style="background: #f8fafc; border: 1.5px solid #e2e8f0; border-left: 5px solid #64748b; padding: 16px 20px; border-radius: 10px; margin-bottom: 24px; color: #334155; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+            <div style="font-weight: 800; font-size: 14.5px; display: flex; align-items: center; gap: 8px;">
+                <i class="fa-solid fa-lock" style="font-size: 18px;"></i> Dokumen Supervisi Telah Selesai &amp; Terkunci Permanen
+            </div>
+            <p style="margin: 6px 0 0; font-size: 13px; line-height: 1.5;">
+                <?= htmlspecialchars($editLockMsg) ?>
+            </p>
+        </div>
+    <?php endif; ?>
 
     <?php if ($editSession): ?>
         <!-- BANNER MODE RESUME / DRAF -->
@@ -388,6 +577,29 @@ require_once __DIR__ . '/../../includes/header.php';
             <input type="hidden" name="schedule_id" value="<?= $scheduleId ?>">
         <?php endif; ?>
 
+        <?php if ($prefillSchedule): ?>
+            <!-- BANNER TERIKAT JADWAL RESMI -->
+            <div style="margin-bottom: 20px; background: #faf5ff; border: 1.5px solid #d8b4fe; border-radius: 10px; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <div style="width: 42px; height: 42px; border-radius: 8px; background: #7c3aed; color: white; display: flex; align-items: center; justify-content: center; font-size: 20px;">
+                        <i class="fa-solid fa-award"></i>
+                    </div>
+                    <div>
+                        <div style="font-weight: 800; color: #581c87; font-size: 14.5px;">Supervisi Pembelajaran Kepala Sekolah</div>
+                        <div style="font-size: 12.5px; color: #6b21a8; margin-top: 2px;">
+                            Pelaksanaan: <strong><?= formatIndoDate($prefillSchedule['scheduled_date']) ?></strong> &bull; Waktu: <strong><?= !empty($prefillSchedule['time_start']) ? substr($prefillSchedule['time_start'], 0, 5) . (!empty($prefillSchedule['time_end']) ? ' - ' . substr($prefillSchedule['time_end'], 0, 5) : '') : '-' ?></strong> &bull; Ruang: <strong><?= htmlspecialchars($prefillSchedule['room_location'] ?: '-') ?></strong>
+                            <?php if (!empty($prefillSchedule['delegated_name'])): ?>
+                                &bull; <span style="color: #b45309; font-weight: 700;"><i class="fa-solid fa-hand-holding-hand"></i> Mandat: <?= htmlspecialchars($prefillSchedule['delegated_name']) ?></span>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+                <a href="schedules.php" class="btn btn-sm" style="background: white; border: 1.5px solid #7c3aed; color: #7c3aed; font-weight: 700; border-radius: 6px; padding: 6px 14px; font-size: 12px; text-decoration: none;">
+                    <i class="fa-solid fa-arrow-left"></i> Kembali ke Jadwal
+                </a>
+            </div>
+        <?php endif; ?>
+
         <!-- KARTU DATA OBSERVASI -->
         <div style="background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 22px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 24px;">
             <h3 style="margin: 0 0 16px; font-size: 16px; font-weight: 800; color: #0f172a; border-bottom: 1px solid #f1f5f9; padding-bottom: 10px;">
@@ -405,36 +617,44 @@ require_once __DIR__ . '/../../includes/header.php';
                             </span>
                         <?php endif; ?>
                     </label>
-                    <select name="teacher_id" id="teacherSelect" class="form-control" required style="font-size: 13.5px; font-weight: 600;">
-                        <option value="">-- Pilih Nama Guru --</option>
-                        <?php if ($isSuperAdmin && empty($userUnitId)): ?>
-                            <?php 
-                            $groupedTeachers = [];
-                            foreach ($teachers as $tc) {
-                                $uName = $tc['unit_name'] ?: 'Lainnya';
-                                $groupedTeachers[$uName][] = $tc;
-                            }
-                            foreach ($groupedTeachers as $uLabel => $tList): ?>
-                                <optgroup label="Unit <?= htmlspecialchars($uLabel) ?>">
-                                    <?php foreach ($tList as $tc): 
-                                        $isSelected = ($editSession && $editSession['teacher_id'] == $tc['id']) || ($prefillSchedule && $prefillSchedule['teacher_id'] == $tc['id']);
-                                    ?>
-                                        <option value="<?= $tc['id'] ?>" <?= $isSelected ? 'selected' : '' ?>>
-                                            <?= htmlspecialchars($tc['name']) ?> <?= !empty($tc['nik']) ? '(' . $tc['nik'] . ')' : '' ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </optgroup>
-                            <?php endforeach; ?>
-                        <?php else: ?>
-                            <?php foreach ($teachers as $tc): 
-                                $isSelected = ($editSession && $editSession['teacher_id'] == $tc['id']) || ($prefillSchedule && $prefillSchedule['teacher_id'] == $tc['id']);
-                            ?>
-                                <option value="<?= $tc['id'] ?>" <?= $isSelected ? 'selected' : '' ?>>
-                                    <?= htmlspecialchars($tc['name']) ?> <?= !empty($tc['nik']) ? '(' . $tc['nik'] . ')' : '' ?>
-                                </option>
-                            <?php endforeach; ?>
-                        <?php endif; ?>
-                    </select>
+                    <?php if ($prefillSchedule): ?>
+                        <input type="hidden" name="teacher_id" value="<?= (int)($prefillSchedule['teacher_id'] ?? $editSession['teacher_id']) ?>">
+                        <div class="form-control" style="background: #f8fafc; font-weight: 700; color: #0f172a; display: flex; align-items: center; justify-content: space-between; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 10px 14px;">
+                            <span><i class="fa-solid fa-chalkboard-user" style="color: #7c3aed; margin-right: 8px;"></i> <?= htmlspecialchars($prefillSchedule['teacher_name'] ?? $editSession['signed_teacher_name'] ?? 'Guru Terdaftar') ?></span>
+                            <span class="badge" style="background: #fae8ff; color: #7e22ce; font-size: 11px; padding: 3px 8px; border-radius: 4px;">Terkunci Sesuai Jadwal</span>
+                        </div>
+                    <?php else: ?>
+                        <select name="teacher_id" id="teacherSelect" class="form-control" required style="font-size: 13.5px; font-weight: 600;">
+                            <option value="">-- Pilih Nama Guru --</option>
+                            <?php if ($isSuperAdmin && empty($userUnitId)): ?>
+                                <?php 
+                                $groupedTeachers = [];
+                                foreach ($teachers as $tc) {
+                                    $uName = $tc['unit_name'] ?: 'Lainnya';
+                                    $groupedTeachers[$uName][] = $tc;
+                                }
+                                foreach ($groupedTeachers as $uLabel => $tList): ?>
+                                    <optgroup label="Unit <?= htmlspecialchars($uLabel) ?>">
+                                        <?php foreach ($tList as $tc): 
+                                            $isSelected = ($editSession && $editSession['teacher_id'] == $tc['id']) || ($prefillSchedule && $prefillSchedule['teacher_id'] == $tc['id']);
+                                        ?>
+                                            <option value="<?= $tc['id'] ?>" <?= $isSelected ? 'selected' : '' ?>>
+                                                <?= htmlspecialchars($tc['name']) ?> <?= !empty($tc['nik']) ? '(' . $tc['nik'] . ')' : '' ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </optgroup>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <?php foreach ($teachers as $tc): 
+                                    $isSelected = ($editSession && $editSession['teacher_id'] == $tc['id']) || ($prefillSchedule && $prefillSchedule['teacher_id'] == $tc['id']);
+                                ?>
+                                    <option value="<?= $tc['id'] ?>" <?= $isSelected ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($tc['name']) ?> <?= !empty($tc['nik']) ? '(' . $tc['nik'] . ')' : '' ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </select>
+                    <?php endif; ?>
                 </div>
 
                 <div>
@@ -604,11 +824,11 @@ require_once __DIR__ . '/../../includes/header.php';
 
         <!-- TOMBOL SIMPAN AKHIR -->
         <div style="display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-bottom: 40px; flex-wrap: wrap;">
-            <button type="submit" name="submit_action" value="save_draft" onclick="setSubmitType(true)" class="btn btn-warning" style="padding: 12px 24px; font-size: 14.5px; font-weight: 800; background: #f59e0b; border-color: #f59e0b; color: white; border-radius: 8px;">
+            <button type="submit" name="submit_action" value="save_draft" onclick="setSubmitType(true)" class="btn btn-warning" <?= $isFormLocked ? 'disabled style="padding: 12px 24px; font-size: 14.5px; font-weight: 800; background: #94a3b8; border-color: #94a3b8; color: white; border-radius: 8px; opacity: 0.6; cursor: not-allowed;"' : 'style="padding: 12px 24px; font-size: 14.5px; font-weight: 800; background: #f59e0b; border-color: #f59e0b; color: white; border-radius: 8px;"' ?>>
                 <i class="fa-solid fa-file-pen"></i> Simpan Draf (Lanjutkan Nanti)
             </button>
-            <button type="submit" name="submit_action" value="save_completed" onclick="setSubmitType(false)" class="btn btn-primary" style="background: #9333ea; border-color: #9333ea; padding: 12px 28px; font-size: 15px; font-weight: 800; box-shadow: 0 4px 14px rgba(147, 51, 234, 0.4); border-radius: 8px;">
-                <i class="fa-solid fa-check-double"></i> Selesaikan & Simpan Resmi
+            <button type="submit" name="submit_action" value="save_completed" onclick="setSubmitType(false)" class="btn btn-primary" <?= $isFormLocked ? 'disabled style="padding: 12px 28px; font-size: 15px; font-weight: 800; background: #94a3b8; border-color: #94a3b8; opacity: 0.6; cursor: not-allowed; border-radius: 8px;"' : 'style="background: #9333ea; border-color: #9333ea; padding: 12px 28px; font-size: 15px; font-weight: 800; box-shadow: 0 4px 14px rgba(147, 51, 234, 0.4); border-radius: 8px;"' ?>>
+                <i class="fa-solid fa-check-double"></i> Selesaikan &amp; Simpan Resmi
             </button>
         </div>
     </form>
