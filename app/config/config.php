@@ -78,6 +78,14 @@ if (!defined('SCHOOL_RADIUS_METERS')) {
     define('SCHOOL_RADIUS_METERS', (int)(getenv('SCHOOL_RADIUS_METERS') ?: 250));
 }
 
+// AIS Performance API Integration (Laptop Sekolah / Data Hub)
+if (!defined('AIS_PERFORMANCE_API_URL')) {
+    define('AIS_PERFORMANCE_API_URL', getenv('AIS_PERFORMANCE_API_URL') ?: 'http://100.126.179.54:8069/V1/performance/academic-averages');
+}
+if (!defined('AIS_PERFORMANCE_API_KEY')) {
+    define('AIS_PERFORMANCE_API_KEY', getenv('AIS_PERFORMANCE_API_KEY') ?: 'c7f99b24e6a8d8102e3b8a139fa4219b6e828453');
+}
+
 // PSR-4 Autoloader untuk namespace App
 spl_autoload_register(function ($class) {
     $prefix = 'App\\';

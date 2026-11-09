@@ -48,3 +48,6 @@ task.md
 implementation_plan.md
 tools.yaml
 scratch/
+app/storage/cache/*
+!app/storage/cache/.gitkeep
+
