@@ -18,9 +18,30 @@ if (is_file($rootEnvPath) && is_readable($rootEnvPath)) {
             }
             if ($k !== '' && getenv($k) === false) {
                 @putenv("{$k}={$v}");
+            }
+            // Selalu isi $_ENV: di Apache thread-safe, nilai putenv() bisa dihapus oleh permintaan lain
+            // yang selesai lebih dulu, jadi getenv() saja tidak bisa diandalkan.
+            if ($k !== '' && !isset($_ENV[$k])) {
                 $_ENV[$k] = $v;
             }
         }
+    }
+}
+
+if (!function_exists('appEnv')) {
+    /**
+     * Baca konfigurasi environment secara andal: getenv() lalu $_ENV.
+     * Di Apache thread-safe (mis. Laragon/Windows) nilai putenv() dari loader .env bisa dihapus oleh
+     * permintaan lain yang selesai lebih dulu, sehingga getenv() saja kadang mengembalikan false.
+     * @return string|false
+     */
+    function appEnv(string $key)
+    {
+        $v = getenv($key);
+        if ($v !== false) {
+            return $v;
+        }
+        return (isset($_ENV[$key]) && is_string($_ENV[$key])) ? $_ENV[$key] : false;
     }
 }
 
@@ -52,13 +73,13 @@ if ($subPath === '' && isset($_SERVER['SCRIPT_NAME'])) {
 $subPath = rtrim(str_replace('\\', '/', $subPath), '/');
 
 if (!defined('BASE_URL')) {
-    define('BASE_URL', getenv('APP_BASE_URL') ?: ($subPath ? ($scheme . $httpHost . $subPath . '/public') : '/public'));
+    define('BASE_URL', appEnv('APP_BASE_URL') ?: ($subPath ? ($scheme . $httpHost . $subPath . '/public') : '/public'));
 }
 if (!defined('ASSET_URL')) {
-    define('ASSET_URL', getenv('APP_ASSET_URL') ?: ($subPath ? ($scheme . $httpHost . $subPath . '/assets') : '/assets'));
+    define('ASSET_URL', appEnv('APP_ASSET_URL') ?: ($subPath ? ($scheme . $httpHost . $subPath . '/assets') : '/assets'));
 }
 if (!defined('UPLOAD_URL')) {
-    define('UPLOAD_URL', getenv('APP_UPLOAD_URL') ?: ($subPath ? ($scheme . $httpHost . $subPath . '/uploads') : '/uploads'));
+    define('UPLOAD_URL', appEnv('APP_UPLOAD_URL') ?: ($subPath ? ($scheme . $httpHost . $subPath . '/uploads') : '/uploads'));
 }
 if (!defined('UPLOAD_PATH')) {
     define('UPLOAD_PATH', dirname(__DIR__) . '/uploads');
@@ -90,50 +111,50 @@ require_once __DIR__ . '/../includes/device_detector.php';
 
 // Konfigurasi Geofencing Lokasi Sekolah (Default: An-Nahl Islamic School)
 if (!defined('SCHOOL_NAME')) {
-    define('SCHOOL_NAME', getenv('SCHOOL_NAME') ?: 'An-Nahl Islamic School');
+    define('SCHOOL_NAME', appEnv('SCHOOL_NAME') ?: 'An-Nahl Islamic School');
 }
 if (!defined('SCHOOL_LATITUDE')) {
-    define('SCHOOL_LATITUDE', (float)(getenv('SCHOOL_LATITUDE') ?: -6.377038));
+    define('SCHOOL_LATITUDE', (float)(appEnv('SCHOOL_LATITUDE') ?: -6.377038));
 }
 if (!defined('SCHOOL_LONGITUDE')) {
-    define('SCHOOL_LONGITUDE', (float)(getenv('SCHOOL_LONGITUDE') ?: 106.945892));
+    define('SCHOOL_LONGITUDE', (float)(appEnv('SCHOOL_LONGITUDE') ?: 106.945892));
 }
 if (!defined('SCHOOL_RADIUS_METERS')) {
-    define('SCHOOL_RADIUS_METERS', (int)(getenv('SCHOOL_RADIUS_METERS') ?: 250));
+    define('SCHOOL_RADIUS_METERS', (int)(appEnv('SCHOOL_RADIUS_METERS') ?: 250));
 }
 
 // AIS Performance API Integration (Laptop Sekolah / Cloudflare Tunnel / Tailscale)
 if (!defined('AIS_PERFORMANCE_API_URL')) {
-    define('AIS_PERFORMANCE_API_URL', getenv('AIS_PERFORMANCE_API_URL') ?: 'https://ais.codika.my.id/V1/performance/academic-averages');
+    define('AIS_PERFORMANCE_API_URL', appEnv('AIS_PERFORMANCE_API_URL') ?: 'https://ais.codika.my.id/V1/performance/academic-averages');
 }
 if (!defined('AIS_PERFORMANCE_API_FALLBACK_URL')) {
-    define('AIS_PERFORMANCE_API_FALLBACK_URL', getenv('AIS_PERFORMANCE_API_FALLBACK_URL') ?: 'http://100.126.179.54:8069/V1/performance/academic-averages');
+    define('AIS_PERFORMANCE_API_FALLBACK_URL', appEnv('AIS_PERFORMANCE_API_FALLBACK_URL') ?: 'http://100.126.179.54:8069/V1/performance/academic-averages');
 }
 if (!defined('AIS_PERFORMANCE_API_KEY')) {
-    define('AIS_PERFORMANCE_API_KEY', getenv('AIS_PERFORMANCE_API_KEY') ?: 'c7f99b24e6a8d8102e3b8a139fa4219b6e828453');
+    define('AIS_PERFORMANCE_API_KEY', appEnv('AIS_PERFORMANCE_API_KEY') ?: 'c7f99b24e6a8d8102e3b8a139fa4219b6e828453');
 }
 if (!defined('AIS_TAHFIDZ_API_URL')) {
-    define('AIS_TAHFIDZ_API_URL', getenv('AIS_TAHFIDZ_API_URL') ?: 'https://ais.codika.my.id/V1/performance/tahfidz-achievement');
+    define('AIS_TAHFIDZ_API_URL', appEnv('AIS_TAHFIDZ_API_URL') ?: 'https://ais.codika.my.id/V1/performance/tahfidz-achievement');
 }
 if (!defined('AIS_TAHFIDZ_API_FALLBACK_URL')) {
-    define('AIS_TAHFIDZ_API_FALLBACK_URL', getenv('AIS_TAHFIDZ_API_FALLBACK_URL') ?: 'http://100.126.179.54:8069/V1/performance/tahfidz-achievement');
+    define('AIS_TAHFIDZ_API_FALLBACK_URL', appEnv('AIS_TAHFIDZ_API_FALLBACK_URL') ?: 'http://100.126.179.54:8069/V1/performance/tahfidz-achievement');
 }
 
 // Konfigurasi AI Semantic Cache untuk Ekstraksi Catatan Guru Tahfidz (100% Server-Side)
 if (!defined('TAHFIDZ_AI_ENABLED')) {
-    $aiEnabledEnv = getenv('TAHFIDZ_AI_ENABLED');
+    $aiEnabledEnv = appEnv('TAHFIDZ_AI_ENABLED');
     define('TAHFIDZ_AI_ENABLED', $aiEnabledEnv === false ? true : in_array(strtolower((string)$aiEnabledEnv), ['1', 'true', 'yes', 'on'], true));
 }
 if (!defined('TAHFIDZ_AI_PROVIDER')) {
-    $prov = strtolower(trim((string)(getenv('TAHFIDZ_AI_PROVIDER') ?: 'gemini')));
+    $prov = strtolower(trim((string)(appEnv('TAHFIDZ_AI_PROVIDER') ?: 'gemini')));
     define('TAHFIDZ_AI_PROVIDER', in_array($prov, ['gemini', 'openai'], true) ? $prov : 'gemini');
 }
 if (!defined('TAHFIDZ_AI_MODEL')) {
     $defModel = TAHFIDZ_AI_PROVIDER === 'openai' ? 'gpt-4o-mini' : 'gemini-3.1-flash-lite';
-    define('TAHFIDZ_AI_MODEL', trim((string)(getenv('TAHFIDZ_AI_MODEL') ?: $defModel)));
+    define('TAHFIDZ_AI_MODEL', trim((string)(appEnv('TAHFIDZ_AI_MODEL') ?: $defModel)));
 }
 if (!defined('TAHFIDZ_AI_API_KEY')) {
-    define('TAHFIDZ_AI_API_KEY', trim((string)(getenv('TAHFIDZ_AI_API_KEY') ?: '')));
+    define('TAHFIDZ_AI_API_KEY', trim((string)(appEnv('TAHFIDZ_AI_API_KEY') ?: '')));
 }
 
 // PSR-4 Autoloader untuk namespace App

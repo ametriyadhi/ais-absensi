@@ -1232,6 +1232,28 @@ foreach ($allMenus as $m) {
     $menusByCategory[$cat][] = $m;
 }
 
+// Kategori menu terbatas: bawaannya hanya Super Admin. Tidak ikut tercentang oleh tombol massal
+// ("Pilih Semua", "Hanya Lihat", centang satu kolom) — akses diberikan dengan mencentang menu satu per satu.
+$restrictedMenuCategories = ['PENILAIAN KINERJA BARU'];
+$restrictedMenuIds = [];
+foreach ($restrictedMenuCategories as $rc) {
+    foreach ($menusByCategory[$rc] ?? [] as $rm) {
+        $restrictedMenuIds[] = (int)$rm['id'];
+    }
+}
+if (!function_exists('restrictedCategoryBadge')) {
+    function restrictedCategoryBadge(string $category, array $restrictedCats): string
+    {
+        if (!in_array($category, $restrictedCats, true)) {
+            return '';
+        }
+        return ' <span title="Bawaan hanya Super Admin. Tidak ikut tombol Pilih Semua / Hanya Lihat; centang manual untuk orang yang diberi akses." '
+            . 'style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;padding:2px 8px;border-radius:6px;font-size:10.5px;font-weight:700;'
+            . 'background:#fef3c7;color:#92400e;border:1px solid #fcd34d;text-transform:none;letter-spacing:0">'
+            . '<i class="fa-solid fa-lock"></i> Bawaan: hanya Super Admin · centang manual per orang</span>';
+    }
+}
+
 require_once __DIR__ . '/../../includes/header.php';
 ?>
 
@@ -2335,7 +2357,7 @@ input[type="checkbox"].crud-row-all {
                 <?php foreach ($menusByCategory as $category => $items): ?>
                     <div class="category-card" data-category="<?= htmlspecialchars($category) ?>">
                         <div class="category-header">
-                            <span class="category-title"><i class="fa-solid fa-folder"></i> <?= htmlspecialchars($category) ?></span>
+                            <span class="category-title"><i class="fa-solid fa-folder"></i> <?= htmlspecialchars($category) ?></span><?= restrictedCategoryBadge($category, $restrictedMenuCategories) ?>
                             <label style="font-size: 11.5px; color: #0284c7; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; margin: 0;">
                                 <input type="checkbox" class="cat-select-all" onchange="toggleCategoryCheckboxes(this)">
                                 <span>Pilih Semua (<?= count($items) ?>)</span>
@@ -2611,7 +2633,7 @@ input[type="checkbox"].crud-row-all {
                                     <tr class="crud-cat-header-row user-cat-row" data-cat="<?= htmlspecialchars($category) ?>">
                                         <td colspan="6">
                                             <div style="display: flex; justify-content: space-between; align-items: center;">
-                                                <span class="crud-cat-title"><i class="fa-solid fa-folder"></i> <?= htmlspecialchars($category) ?></span>
+                                                <span class="crud-cat-title"><i class="fa-solid fa-folder"></i> <?= htmlspecialchars($category) ?></span><?= restrictedCategoryBadge($category, $restrictedMenuCategories) ?>
                                                 <span style="font-size: 11px; color: #64748b; font-weight: 600;"><?= count($items) ?> menu</span>
                                             </div>
                                         </td>
@@ -2776,7 +2798,7 @@ input[type="checkbox"].crud-row-all {
                                     <tr class="crud-cat-header-row role-cat-row" data-cat="<?= htmlspecialchars($category) ?>">
                                         <td colspan="6">
                                             <div style="display: flex; justify-content: space-between; align-items: center;">
-                                                <span class="crud-cat-title"><i class="fa-solid fa-folder"></i> <?= htmlspecialchars($category) ?></span>
+                                                <span class="crud-cat-title"><i class="fa-solid fa-folder"></i> <?= htmlspecialchars($category) ?></span><?= restrictedCategoryBadge($category, $restrictedMenuCategories) ?>
                                                 <span style="font-size: 11px; color: #64748b; font-weight: 600;"><?= count($items) ?> menu</span>
                                             </div>
                                         </td>
@@ -3136,7 +3158,7 @@ input[type="checkbox"].crud-row-all {
                                 <?php foreach ($menusByCategory as $category => $items): ?>
                                     <tr class="crud-cat-header-row create-cat-row">
                                         <td colspan="6">
-                                            <span class="crud-cat-title"><i class="fa-solid fa-folder"></i> <?= htmlspecialchars($category) ?></span>
+                                            <span class="crud-cat-title"><i class="fa-solid fa-folder"></i> <?= htmlspecialchars($category) ?></span><?= restrictedCategoryBadge($category, $restrictedMenuCategories) ?>
                                         </td>
                                     </tr>
                                     <?php foreach ($items as $m): ?>
@@ -3438,12 +3460,16 @@ function onPrimaryRadioChange(roleId) {
 // 2D CRUD MATRIX LOGIC & EVENT HANDLERS
 // =========================================================================
 
+// Menu terbatas (mis. Penilaian Kinerja Baru): tidak ikut tercentang oleh aksi massal
+const RESTRICTED_MENU_IDS = new Set(<?= json_encode(array_map('strval', $restrictedMenuIds)) ?>);
+
 // Preset: Full CRUD, Read Only, Empty
 function applyMatrixPreset(target, mode) {
     const rows = document.querySelectorAll(`.${target}-crud-row`);
     rows.forEach(row => {
         if (row.style.display === 'none') return; // Lewati jika tersembunyi karena search
         const mId = row.getAttribute('data-menuid');
+        if (mode !== 'empty' && RESTRICTED_MENU_IDS.has(String(mId))) return; // hanya bisa dicentang manual
         const chkR = document.getElementById(`${target}_perm_${mId}_read`);
         const chkC = document.getElementById(`${target}_perm_${mId}_create`);
         const chkE = document.getElementById(`${target}_perm_${mId}_edit`);
@@ -3479,6 +3505,7 @@ function toggleMatrixCol(target, action, isChecked) {
     chks.forEach(chk => {
         const row = chk.closest('tr');
         if (row && row.style.display !== 'none') {
+            if (isChecked && RESTRICTED_MENU_IDS.has(String(row.getAttribute('data-menuid')))) return; // hanya bisa dicentang manual
             chk.checked = isChecked;
             const mId = row.getAttribute('data-menuid');
             // Jika Create/Edit/Delete dicentang, otomatis aktifkan Read
